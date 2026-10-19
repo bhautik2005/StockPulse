@@ -29,9 +29,11 @@ StockPulse is built around one promise: **an order either happens completely or 
 cp .env.example .env          # provides the local Compose configuration
 
 docker compose up -d --build --wait
-docker compose exec server npm run migrate
 docker compose exec server npm run seed
 ```
+
+The API applies pending database migrations before it starts accepting requests.
+Run the seed command afterward to create the demo accounts and sample inventory.
 
 | | |
 |---|---|
@@ -50,6 +52,12 @@ curl -s -X POST localhost:5000/api/auth/login \
   -H 'content-type: application/json' \
   -d '{"email":"client@acme.dev","password":"ClientPass1234"}'
 ```
+
+If login returns `401 INVALID_CREDENTIALS`, the API did reach the database; the
+email/password pair was not found. Check `/health` for database connectivity, run
+`docker compose exec server npm run seed` to create the demo accounts, and use
+the exact credentials printed by the seed command. For an account created through
+registration, sign in with the email and password used at registration instead.
 
 ### Two things worth knowing
 
