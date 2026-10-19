@@ -1,66 +1,74 @@
-# StockPulse database stack.
-#
-#   docker compose up -d          # start PostgreSQL + Adminer
-#   docker compose up -d --wait   # ...and wait until the database is actually ready
-#   docker compose logs -f db     # watch the server
-#   docker compose down           # stop (data stays in ./data/db)
-#   docker compose down -v        # stop and DELETE the data
-#
-# Then, for the app:
-#   npm run migrate && npm run seed && npm run dev
-#
-# Adminer: http://localhost:8080  (server: db, user: bhautik, pass: bhautik, db: StockPulse)
-#
-# NOTE: `version: "3"` was removed on purpose. Compose v2 ignores it (and warns),
-# and the legacy v3 schema does not allow `depends_on.condition` -- which is what
-# keeps Adminer from starting before the database can accept connections.
-
 services:
   db:
-    # Pinned, not `postgres:latest`. With `restart: always` an unpinned image
-    # means a routine `docker compose pull` can silently jump a major version,
-    # and a newer PostgreSQL will refuse to start on an older data directory.
-    # 18 matches the server this project's test suite was verified against.
     image: postgres:18-alpine
-    container_name: stockpulse-db
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-StockPulse}
       POSTGRES_USER: ${POSTGRES_USER:-bhautik}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bhautik}
-      # Deterministic collation, so "ABC" sorts before "abc" on every machine.
-      POSTGRES_INITDB_ARGS: '--encoding=UTF8 --locale=C'
-      # Set explicitly rather than relying on the image default: the official
-      # postgres:18 image moved its default PGDATA to /var/lib/postgresql/18/docker
-      # and declares a volume at /var/lib/postgresql. Naming PGDATA inside the
-      # bind mount below keeps that mount meaningful on 16, 17 and 18 alike.
+      POSTGRES_INITDB_ARGS: --encoding=UTF8 --locale=C
       PGDATA: /var/lib/postgresql/data/pgdata
     ports:
-      # Host 5432 -> container 5432. Change the left side if you already run
-      # PostgreSQL on the host (e.g. "5433:5432" plus a matching DATABASE_URL).
-      - '5432:5432'
+      - "5432:5432"
     volumes:
-      # Your ownership of the files: ./data/db on the host, plain and visible.
-      - ./data/db:/var/lib/postgresql/data
+      - ./.pgdata:/var/lib/postgresql/data
     healthcheck:
-      # Without this, `depends_on` only waits for the container to exist -- the
-      # server takes a moment longer to accept connections.
-      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-bhautik} -d ${POSTGRES_DB:-StockPulse}']
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 5s
       timeout: 5s
       retries: 12
       start_period: 10s
+    networks:
+      - stockpulse
 
-  adminer:
-    image: adminer:5
-    container_name: stockpulse-adminer
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
     restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
     environment:
-      # Pre-fills the login form's "Server" field; without it Adminer defaults to
-      # "localhost", which from inside the container is not the database.
+      NODE_ENV: production
+      PORT: 5000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-bhautik}:${POSTGRES_PASSWORD:-bhautik}@db:5432/${POSTGRES_DB:-StockPulse}
+      JWT_SECRET: ${JWT_SECRET:-local-docker-development-secret-change-before-deploy}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5173}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+    ports:
+      - "5000:5000"
+    networks:
+      - stockpulse
+
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:5000}
+        VITE_CSRF_COOKIE: ${VITE_CSRF_COOKIE:-sp_csrf}
+    restart: unless-stopped
+    depends_on:
+      - server
+    ports:
+      - "5173:5173"
+    networks:
+      - stockpulse
+
+  adminer:
+    image: adminer:5
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
       ADMINER_DEFAULT_SERVER: db
     ports:
-      - '8080:8080'
+      - "8080:8080"
+    networks:
+      - stockpulse
+
+networks:
+  stockpulse:
+    driver: bridge

@@ -26,18 +26,17 @@ StockPulse is built around one promise: **an order either happens completely or 
 ## Quick start
 
 ```bash
-npm install
-cp .env.example .env          # already points at the Docker database below
+cp .env.example .env          # provides the local Compose configuration
 
-docker compose up -d --wait   # PostgreSQL 18 + Adminer
-npm run migrate               # create the schema
-npm run seed                  # demo warehouses, products, stock and orders
-npm run dev                   # http://localhost:4000
+docker compose up -d --build --wait
+docker compose exec server npm run migrate
+docker compose exec server npm run seed
 ```
 
 | | |
 |---|---|
-| API | http://localhost:4000 |
+| Frontend | http://localhost:5173 |
+| API | http://localhost:5000 |
 | Adminer (database UI) | http://localhost:8080 — server `db`, user `bhautik`, password `bhautik`, database `StockPulse` |
 | Database | `localhost:5432` — from the app: `postgres://bhautik:bhautik@127.0.0.1:5432/StockPulse` |
 
@@ -45,9 +44,9 @@ Check it is alive, then sign in and place an order (the seed prints all demo
 accounts):
 
 ```bash
-curl -s localhost:4000/health
+curl -s localhost:5000/health
 
-curl -s -X POST localhost:4000/api/auth/login \
+curl -s -X POST localhost:5000/api/auth/login \
   -H 'content-type: application/json' \
   -d '{"email":"client@acme.dev","password":"ClientPass1234"}'
 ```
@@ -57,20 +56,17 @@ curl -s -X POST localhost:4000/api/auth/login \
 - **The database name is case-sensitive.** Compose creates `StockPulse`, and
   PostgreSQL will not find `stockpulse`. The name is created quoted
   (`CREATE DATABASE "StockPulse"`), so those capitals are real and must appear in
-  `DATABASE_URL` exactly. Prefer lowercase? Change `POSTGRES_DB` in
-  `docker-compose.yml` *and* `DATABASE_URL`, then run `docker compose down -v`
+  `DATABASE_URL` exactly. Prefer lowercase? Change `POSTGRES_DB` in `.env`,
+  then run `docker compose down -v`
   (which deletes the data directory) before starting again.
-- **The data lives in `./data/db`** on the host, exactly where your Compose file
+- **The data lives in `./.pgdata`** on the host, exactly where your Compose file
   put it, and it is git-ignored. `docker compose down` keeps it;
   `docker compose down -v` does not — with a bind mount, only removing
-  `./data/db` itself actually deletes it.
+  `./.pgdata` itself actually deletes it.
 
 > **Why `PGDATA` is set explicitly.** The official `postgres:18` image moved its
 > default data directory to `/var/lib/postgresql/18/docker` and declares its
-> volume at `/var/lib/postgresql`. A bind mount at `/var/lib/postgresql/data`
-> (the pre-18 convention, and what the original Compose file used) would
-> therefore be *silently ignored*, and the database would live in an anonymous
-> volume instead of `./data/db`. Naming `PGDATA` inside the mount keeps it
+> volume at `/var/lib/postgresql`. Naming `PGDATA` inside the bind mount keeps it
 > meaningful on 16, 17 and 18 alike.
 
 ### Without Docker
