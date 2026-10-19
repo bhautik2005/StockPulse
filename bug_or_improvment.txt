@@ -1,0 +1,57 @@
+ ⚠️ Edge Cases & Attack Vectors Addressed
+
+  ┌────────────────────────────────────────────┬──────────────────────────────────────────────────────────────────┐
+  │                 Edge Case                  │                         How It's Handled                         │
+  ├────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────┤
+  │ Admin demoted to Staff but holds valid JWT │ token_version mismatch on next request → 401 TOKEN_REVOKED       │
+  ├────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────┤
+  │ Account disabled while logged in           │ is_active check on every request → 403 ACCOUNT_DISABLED          │
+  ├────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────┤
+  │ CSRF on cookie auth                        │ assertCsrf() called in authenticate middleware for cookie source │
+  ├────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────┤
+  │ Cross-site request forgery (Bearer token)  │ Bearer tokens exempt - not sent automatically by browser         │
+  ├────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────┤
+  │ User enumeration via timing                │ DUMMY_HASH ensures bcrypt runs even for unknown emails           │
+  ├────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────┤
+  │ IDOR (Manager accessing other warehouse)   │ requireWarehouseAccess validates warehouse_id against scope      │
+  ├────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────┤
+  │ Race condition on role change              │ Transactional update with bumpTokenVersion flag                  │
+  ├────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────┤
+  │ Long passwords (bcrypt 72-byte limit)      │ Schema enforces max 72 chars                                     │
+  ├────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────┤
+  │ Weak bcrypt in production                  │ Env validation enforces ≥10 rounds outside test                  │
+  ├────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────┤
+  │ Last Admin lockout                         │ countOtherActiveAdmins prevents self-demotion                    │
+  ├────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────┤
+  │ Stale warehouse grants                     │ Queries check w.deleted_at IS NULL on every scope resolution     │
+  ├────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────┤
+  │ Token replay after logout                  │ Logout with ?all=true bumps token_version                        │
+  └────────────────────────────────────────────┴──────────────────────────────────────────────────────────────────┘
+
+  ---
+
+  🔴 Potential Gaps / Considerations
+
+  ┌──────────────────┬────────────────────────────────────────────────┬──────────────────────────────────────────────────────────┐   
+  │       Area       │                 Current State                  │                      Recommendation                      │   
+  ├──────────────────┼────────────────────────────────────────────────┼──────────────────────────────────────────────────────────┤   
+  │ Refresh Tokens   │ Not implemented (only short-lived access       │ Add refresh token rotation for better UX                 │   
+  │                  │ tokens)                                        │                                                          │   
+  ├──────────────────┼────────────────────────────────────────────────┼──────────────────────────────────────────────────────────┤   
+  │ MFA/2FA          │ Not present                                    │ Consider TOTP for Admin/Manager roles                    │   
+  ├──────────────────┼────────────────────────────────────────────────┼──────────────────────────────────────────────────────────┤   
+  │ Audit Logging    │ No explicit auth audit trail                   │ Log login attempts, role changes, access denials         │   
+  ├──────────────────┼────────────────────────────────────────────────┼──────────────────────────────────────────────────────────┤   
+  │ Account Lockout  │ Only rate-limited on login endpoint            │ Add progressive delays / account lockout after N         │   
+  │                  │                                                │ failures                                                 │   
+  ├──────────────────┼────────────────────────────────────────────────┼──────────────────────────────────────────────────────────┤   
+  │ Password         │ Only min 12 chars                              │ Add complexity requirements, breach check                │   
+  │ Policies         │                                                │ (HaveIBeenPwned)                                         │   
+  ├──────────────────┼────────────────────────────────────────────────┼──────────────────────────────────────────────────────────┤   
+  │ Device           │ No device tracking                             │ Track active sessions per user                           │   
+  │ Management       │                                                │                                                          │   
+  ├──────────────────┼────────────────────────────────────────────────┼──────────────────────────────────────────────────────────┤   
+  │ Password Reset   │ Not visible in code                            │ Ensure secure reset flow with time-limited tokens        │   
+  ├──────────────────┼────────────────────────────────────────────────┼──────────────────────────────────────────────────────────┤   
+  │ JWT Algorithm    │ Default (HS256) - symmetric                    │ Consider RS256 for key rotation capability               │   
+  └──────────────────┴────────────────────────────────────────────────┴──────────────────────────────────────────────────────────┘   

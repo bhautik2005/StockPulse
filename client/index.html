@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
+    <title>StockPulse — Operations Console</title>
+    <meta
+      name="description"
+      content="Multi-warehouse inventory and order fulfilment console."
+    />
+    <script>
+      /*
+       * Applied before the first paint. React would otherwise mount with the
+       * default theme and then correct itself, which shows as a white flash on a
+       * dark screen -- very visible in an operations centre.
+       */
+      (function () {
+        try {
+          var stored = localStorage.getItem('stockpulse-theme');
+          var dark = stored ? stored === 'dark' : true; // dark by default
+          document.documentElement.classList.toggle('dark', dark);
+        } catch (error) {
+          /* private mode: keep the default */
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

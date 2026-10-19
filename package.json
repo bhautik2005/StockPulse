@@ -1,0 +1,47 @@
+{
+  "name": "stockpulse",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "StockPulse - enterprise multi-warehouse inventory & supply chain management system",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "migrate": "node src/db/migrate.js",
+    "seed": "node src/db/seed.js",
+    "reset": "node src/db/migrate.js --fresh && node src/db/seed.js",
+    "db:up": "node scripts/dev-db.js up",
+    "db:down": "node scripts/dev-db.js down",
+    "db:docker": "docker compose up -d --wait",
+    "db:docker:down": "docker compose down",
+    "db:docker:logs": "docker compose logs -f db",
+    "test": "node --test --test-concurrency=1 tests/",
+    "test:inproc": "node scripts/run-tests.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.4.0",
+    "pg": "^8.13.1",
+    "xlsx": "^0.18.5",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "embedded-postgres": "^18.4.0-beta.17"
+  },
+  "optionalDependencies": {
+    "@embedded-postgres/darwin-arm64": "^18.4.0-beta.17",
+    "@embedded-postgres/darwin-x64": "^18.4.0-beta.17",
+    "@embedded-postgres/linux-x64": "^18.4.0-beta.17",
+    "@embedded-postgres/windows-x64": "^18.4.0-beta.17"
+  }
+}

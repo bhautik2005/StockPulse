@@ -1,0 +1,634 @@
+[
+  {
+    "label": "GET /api/auth/me (admin)",
+    "status": 200,
+    "data": {
+      "id": 1,
+      "name": "Ada Okafor",
+      "email": "admin@stockpulse.dev",
+      "role": "Admin",
+      "is_active": true,
+      "warehouses": [],
+      "scope": {
+        "all": true,
+        "ids": null
+      }
+    }
+  },
+  {
+    "label": "GET /api/auth/me (manager)",
+    "status": 200,
+    "data": {
+      "id": 2,
+      "name": "Bruno Mwangi",
+      "email": "manager.nairobi@stockpulse.dev",
+      "role": "Manager",
+      "is_active": true,
+      "warehouses": [
+        {
+          "id": 1,
+          "code": "WH-NBO",
+          "name": "Nairobi Central"
+        }
+      ],
+      "scope": {
+        "all": false,
+        "ids": [
+          1
+        ]
+      }
+    }
+  },
+  {
+    "label": "GET /api/auth/me (client)",
+    "status": 200,
+    "data": {
+      "id": 5,
+      "name": "Acme Procurement",
+      "email": "client@acme.dev",
+      "role": "Client",
+      "is_active": true,
+      "warehouses": [],
+      "scope": {
+        "all": false,
+        "ids": []
+      }
+    }
+  },
+  {
+    "label": "GET /api/users",
+    "status": 200,
+    "data": [
+      {
+        "id": 1,
+        "name": "Ada Okafor",
+        "email": "admin@stockpulse.dev",
+        "role": "Admin",
+        "is_active": true,
+        "warehouse_ids": []
+      },
+      "...(2 items)"
+    ],
+    "meta": {
+      "page": 1,
+      "limit": 2,
+      "total": 5
+    }
+  },
+  {
+    "label": "GET /api/warehouses",
+    "status": 200,
+    "data": [
+      {
+        "id": 1,
+        "code": "WH-NBO",
+        "name": "Nairobi Central",
+        "location": "Mombasa Road, Nairobi, KE",
+        "is_active": true,
+        "manager": {
+          "id": 2,
+          "name": "Bruno Mwangi",
+          "email": "manager.nairobi@stockpulse.dev"
+        },
+        "counts": {
+          "products": 5,
+          "units_on_hand": 258
+        },
+        "created_at": "2026-10-17T14:27:59.289Z"
+      },
+      "...(3 items)"
+    ],
+    "meta": {
+      "page": 1,
+      "limit": 3,
+      "total": 3
+    }
+  },
+  {
+    "label": "GET /api/warehouses/:id",
+    "status": 200,
+    "data": {
+      "id": 1,
+      "code": "WH-NBO",
+      "name": "Nairobi Central",
+      "location": "Mombasa Road, Nairobi, KE",
+      "is_active": true,
+      "manager": {
+        "id": 2,
+        "name": "Bruno Mwangi",
+        "email": "manager.nairobi@stockpulse.dev"
+      },
+      "counts": {},
+      "created_at": "2026-10-17T14:27:59.289Z"
+    }
+  },
+  {
+    "label": "GET /api/warehouses/:id/inventory",
+    "status": 200,
+    "data": [
+      {
+        "id": 3,
+        "warehouse_id": 1,
+        "warehouse_code": "WH-NBO",
+        "warehouse_name": "Nairobi Central",
+        "product_id": 3,
+        "sku": "SP-MON-27-03",
+        "product_name": "27in 4K Monitor",
+        "category": "Displays",
+        "quantity": 12,
+        "effective_reorder_level": 10,
+        "unit_price": "249.00",
+        "stock_value": "2988.00"
+      },
+      "...(2 items)"
+    ],
+    "meta": {
+      "page": 1,
+      "limit": 2,
+      "total": 5
+    }
+  },
+  {
+    "label": "GET /api/warehouses/:id/ledger",
+    "status": 200,
+    "data": [
+      {
+        "id": "18",
+        "delta": -25,
+        "reason": "sale",
+        "ref_type": "order",
+        "ref_id": "2",
+        "note": null,
+        "created_at": "2026-10-17T14:27:59.989Z",
+        "product_id": 7,
+        "sku": "SP-CABLE-07",
+        "product_name": "USB-C Cable 2m",
+        "created_by_name": "Acme Procurement"
+      },
+      "...(2 items)"
+    ],
+    "meta": {
+      "count": 2
+    }
+  },
+  {
+    "label": "GET /api/warehouses/:id/orders",
+    "status": 200,
+    "data": [
+      {
+        "id": 2,
+        "order_number": "SO-2026-000002",
+        "status": "Pending",
+        "total_amount": "448.70",
+        "currency": "USD",
+        "created_at": "2026-10-17T14:27:59.989Z",
+        "client_name": "Acme Procurement",
+        "line_count": 2
+      },
+      "...(2 items)"
+    ],
+    "meta": {
+      "total": 2
+    }
+  },
+  {
+    "label": "GET /api/products",
+    "status": 200,
+    "data": [
+      {
+        "id": 3,
+        "sku": "SP-MON-27-03",
+        "name": "27in 4K Monitor",
+        "category": "Displays",
+        "unit_price": "249.00",
+        "reorder_level": 10,
+        "is_active": true,
+        "total_quantity": 35,
+        "created_at": "2026-10-17T14:27:59.313Z"
+      },
+      "...(2 items)"
+    ],
+    "meta": {
+      "page": 1,
+      "limit": 2,
+      "total": 8
+    }
+  },
+  {
+    "label": "GET /api/products (search+category)",
+    "status": 200,
+    "data": [
+      {
+        "id": 3,
+        "sku": "SP-MON-27-03",
+        "name": "27in 4K Monitor",
+        "category": "Displays",
+        "unit_price": "249.00",
+        "reorder_level": 10,
+        "is_active": true,
+        "total_quantity": 35,
+        "created_at": "2026-10-17T14:27:59.313Z"
+      },
+      "...(1 items)"
+    ],
+    "meta": {
+      "page": 1,
+      "limit": 2,
+      "total": 1
+    }
+  },
+  {
+    "label": "GET /api/catalog",
+    "status": 200,
+    "data": [
+      {
+        "id": 3,
+        "sku": "SP-MON-27-03",
+        "name": "27in 4K Monitor",
+        "category": "Displays",
+        "unit_price": "249.00",
+        "available": 35,
+        "in_stock": true
+      },
+      "...(2 items)"
+    ],
+    "meta": {
+      "page": 1,
+      "limit": 2,
+      "total": 8
+    }
+  },
+  {
+    "label": "GET /api/inventory",
+    "status": 200,
+    "data": [
+      {
+        "warehouse": {
+          "id": 3,
+          "code": "WH-DXB",
+          "name": "Dubai Fulfilment"
+        },
+        "product": {
+          "id": 3,
+          "sku": "SP-MON-27-03",
+          "name": "27in 4K Monitor",
+          "category": "Displays"
+        },
+        "quantity": 23,
+        "reorder_level": 10,
+        "is_low_stock": false,
+        "unit_price": "249.00",
+        "stock_value": "5727.00"
+      },
+      "...(2 items)"
+    ],
+    "meta": {
+      "page": 1,
+      "limit": 2,
+      "total": 15
+    }
+  },
+  {
+    "label": "GET /api/inventory?low_stock=true",
+    "status": 200,
+    "data": [
+      {
+        "warehouse": {
+          "id": 2,
+          "code": "WH-LAG",
+          "name": "Lagos Distribution"
+        },
+        "product": {
+          "id": 6,
+          "sku": "SP-ROUT-06",
+          "name": "Enterprise Router R900",
+          "category": "Networking"
+        },
+        "quantity": 4,
+        "reorder_level": 5,
+        "is_low_stock": true,
+        "unit_price": "459.00",
+        "stock_value": "1836.00"
+      },
+      "...(2 items)"
+    ],
+    "meta": {
+      "page": 1,
+      "limit": 2,
+      "total": 6
+    }
+  },
+  {
+    "label": "GET /api/inventory/low-stock",
+    "status": 200,
+    "data": [
+      {
+        "warehouse": {
+          "id": 2,
+          "code": "WH-LAG",
+          "name": "Lagos Distribution"
+        },
+        "product": {
+          "id": 7,
+          "sku": "SP-CABLE-07",
+          "name": "USB-C Cable 2m",
+          "category": "Accessories"
+        },
+        "quantity": 40,
+        "reorder_level": 100,
+        "units_below_threshold": 60
+      },
+      "...(2 items)"
+    ],
+    "meta": {
+      "count": 2
+    }
+  },
+  {
+    "label": "GET /api/inventory/ledger",
+    "status": 200,
+    "data": [
+      {
+        "id": "19",
+        "delta": -1,
+        "reason": "sale",
+        "ref_type": "order",
+        "ref_id": "2",
+        "note": null,
+        "created_at": "2026-10-17T14:27:59.989Z",
+        "warehouse_id": 3,
+        "warehouse_code": "WH-DXB",
+        "product_id": 4,
+        "sku": "SP-DOCK-04",
+        "created_by_name": "Acme Procurement"
+      },
+      "...(2 items)"
+    ],
+    "meta": {
+      "count": 2
+    }
+  },
+  {
+    "label": "GET /api/orders (admin)",
+    "status": 200,
+    "data": [
+      {
+        "id": 2,
+        "order_number": "SO-2026-000002",
+        "status": "Pending",
+        "total_amount": "448.70",
+        "currency": "USD",
+        "client_name": "Acme Procurement",
+        "line_count": 2,
+        "created_at": "2026-10-17T14:27:59.989Z"
+      },
+      "...(2 items)"
+    ],
+    "meta": {
+      "page": 1,
+      "limit": 2,
+      "total": 2
+    }
+  },
+  {
+    "label": "GET /api/orders/:id (admin)",
+    "status": 200,
+    "data": {
+      "id": 2,
+      "order_number": "SO-2026-000002",
+      "status": "Pending",
+      "total_amount": "448.70",
+      "currency": "USD",
+      "client": {
+        "id": 5,
+        "name": "Acme Procurement",
+        "email": "client@acme.dev"
+      },
+      "cancelled_reason": null,
+      "created_at": "2026-10-17T14:27:59.989Z",
+      "updated_at": "2026-10-17T14:27:59.989Z",
+      "items": [
+        {
+          "id": 3,
+          "product_id": 4,
+          "warehouse": {
+            "id": 3,
+            "code": "WH-DXB",
+            "name": "Dubai Fulfilment"
+          },
+          "product_sku": "SP-DOCK-04",
+          "product_name": "USB-C Docking Station",
+          "quantity": 1,
+          "price_at_purchase": "129.95",
+          "line_total": "129.95"
+        },
+        {
+          "id": 4,
+          "product_id": 7,
+          "warehouse": {
+            "id": 1,
+            "code": "WH-NBO",
+            "name": "Nairobi Central"
+          },
+          "product_sku": "SP-CABLE-07",
+          "product_name": "USB-C Cable 2m",
+          "quantity": 25,
+          "price_at_purchase": "12.75",
+          "line_total": "318.75"
+        }
+      ],
+      "status_history": [
+        {
+          "from": null,
+          "to": "Pending",
+          "changed_by": "Acme Procurement",
+          "at": "2026-10-17T14:27:59.989Z"
+        }
+      ]
+    }
+  },
+  {
+    "label": "GET /api/orders (client)",
+    "status": 200,
+    "data": [
+      {
+        "id": 2,
+        "order_number": "SO-2026-000002",
+        "status": "Pending",
+        "total_amount": "448.70",
+        "currency": "USD",
+        "client_name": "Acme Procurement",
+        "line_count": 2,
+        "created_at": "2026-10-17T14:27:59.989Z"
+      },
+      "...(2 items)"
+    ],
+    "meta": {
+      "page": 1,
+      "limit": 2,
+      "total": 2
+    }
+  },
+  {
+    "label": "GET /api/analytics/summary",
+    "status": 200,
+    "data": {
+      "scope": "all_warehouses",
+      "revenue": {
+        "total": "1396.65",
+        "delivered": "0.00",
+        "currency": "USD",
+        "definition": "All non-cancelled orders"
+      },
+      "orders": {
+        "total_orders": 2,
+        "pending_orders": 2,
+        "active_orders": 2,
+        "delivered_orders": 0,
+        "cancelled_orders": 0
+      },
+      "low_stock": {
+        "low_stock_rows": 6,
+        "low_stock_products": 6
+      },
+      "inventory": {
+        "units_on_hand": "503",
+        "stock_value": "36297.55"
+      }
+    }
+  },
+  {
+    "label": "GET /api/analytics/summary (manager)",
+    "status": 200,
+    "data": {
+      "scope": "assigned_warehouses",
+      "revenue": {
+        "total": "768.70",
+        "delivered": "0.00",
+        "currency": "USD",
+        "definition": "All non-cancelled orders"
+      },
+      "orders": {
+        "total_orders": 2,
+        "pending_orders": 2,
+        "active_orders": 2,
+        "delivered_orders": 0,
+        "cancelled_orders": 0
+      },
+      "low_stock": {
+        "low_stock_rows": 2,
+        "low_stock_products": 2
+      },
+      "inventory": {
+        "units_on_hand": "258",
+        "stock_value": "9779.70"
+      }
+    }
+  },
+  {
+    "label": "GET /api/analytics/sales-trend",
+    "status": 200,
+    "data": [
+      {
+        "day": "2026-10-04",
+        "revenue": "0.00",
+        "orders": 0
+      },
+      "...(14 items)"
+    ],
+    "meta": {
+      "days": 14
+    }
+  },
+  {
+    "label": "GET /api/analytics/top-products",
+    "status": 200,
+    "data": [
+      {
+        "product_id": 3,
+        "sku": "SP-MON-27-03",
+        "product_name": "27in 4K Monitor",
+        "units_sold": 2,
+        "revenue": "498.00"
+      },
+      "...(3 items)"
+    ]
+  },
+  {
+    "label": "GET /api/analytics/by-warehouse",
+    "status": 200,
+    "data": [
+      {
+        "id": 1,
+        "code": "WH-NBO",
+        "name": "Nairobi Central",
+        "location": "Mombasa Road, Nairobi, KE",
+        "is_active": true,
+        "units_on_hand": 258,
+        "stock_value": "9779.70",
+        "low_stock_count": 2
+      },
+      "...(3 items)"
+    ]
+  },
+  {
+    "label": "GET /api/analytics/summary (client -> 403)",
+    "status": 403,
+    "data": {
+      "error": {
+        "code": "INSUFFICIENT_ROLE",
+        "message": "This action requires one of: Admin, Manager, Staff",
+        "requestId": "e36c2b08-7f87-4179-9225-55fc7baea31c"
+      }
+    },
+    "error": {
+      "code": "INSUFFICIENT_ROLE",
+      "message": "This action requires one of: Admin, Manager, Staff",
+      "requestId": "e36c2b08-7f87-4179-9225-55fc7baea31c"
+    }
+  },
+  {
+    "label": "GET /api/analytics/bad-params",
+    "status": 400,
+    "data": {
+      "error": {
+        "code": "VALIDATION_FAILED",
+        "message": "Invalid query parameters",
+        "details": [
+          {
+            "path": "days",
+            "message": "Number must be less than or equal to 365"
+          }
+        ],
+        "requestId": "c923e382-aa86-4161-b60b-cac9e13c8755"
+      }
+    },
+    "error": {
+      "code": "VALIDATION_FAILED",
+      "message": "Invalid query parameters",
+      "details": [
+        {
+          "path": "days",
+          "message": "Number must be less than or equal to 365"
+        }
+      ],
+      "requestId": "c923e382-aa86-4161-b60b-cac9e13c8755"
+    }
+  },
+  {
+    "label": "GET /api/orders/999999",
+    "status": 404,
+    "data": {
+      "error": {
+        "code": "ORDER_NOT_FOUND",
+        "message": "Order not found",
+        "requestId": "adac1ea9-a17a-4d92-a106-43979111bf04"
+      }
+    },
+    "error": {
+      "code": "ORDER_NOT_FOUND",
+      "message": "Order not found",
+      "requestId": "adac1ea9-a17a-4d92-a106-43979111bf04"
+    }
+  }
+]

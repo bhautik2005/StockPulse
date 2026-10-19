@@ -1,0 +1,15 @@
+node_modules/
+.npm-cache/
+.env
+.env.local
+.env.test
+*.log
+coverage/
+.pgdata/
+pgdata/
+# docker-compose.yml bind-mounts the database files here.
+data/
+vendor/
+dist/
+.DS_Store
+Thumbs.db
