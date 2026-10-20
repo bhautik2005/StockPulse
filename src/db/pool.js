@@ -15,6 +15,8 @@ import pg from 'pg';
 import { env } from '../config/env.js';
 import { logger } from '../lib/logger.js';
 
+const isProduction = process.env.NODE_ENV === 'production';
+
 const { Pool } = pg;
 
 export const pool = new Pool({
@@ -25,6 +27,9 @@ export const pool = new Pool({
   statement_timeout: env.DB_STATEMENT_TIMEOUT_MS,
   lock_timeout: env.DB_LOCK_TIMEOUT_MS,
   application_name: 'stockpulse-api',
+  family: 4, // <-- ADDED: Forces IPv4 to fix Render's ENETUNREACH cloud deployment crash
+  ssl: isProduction ? { rejectUnauthorized: false } : false, // <-- ADDED: Ensures secure cloud DB handshake
+
 });
 
 // A pool-level error means an *idle* client died (network blip, DB restart).
