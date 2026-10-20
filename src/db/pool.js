@@ -19,6 +19,20 @@ const isProduction = process.env.NODE_ENV === 'production';
 
 const { Pool } = pg;
 
+let databaseUrlDiagnostics;
+try {
+  const databaseUrl = new URL(env.DATABASE_URL);
+  databaseUrlDiagnostics = {
+    parses: true,
+    postgresScheme: ['postgres:', 'postgresql:'].includes(databaseUrl.protocol),
+    hasHost: Boolean(databaseUrl.hostname),
+    hasDatabase: Boolean(databaseUrl.pathname.slice(1)),
+  };
+} catch {
+  databaseUrlDiagnostics = { parses: false };
+}
+console.log('DEBUG RUNTIME DATABASE_URL:', databaseUrlDiagnostics);
+
 export const pool = new Pool({
   connectionString: env.DATABASE_URL,
   max: env.DB_POOL_MAX,
