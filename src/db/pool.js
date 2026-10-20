@@ -28,8 +28,9 @@ export const pool = new Pool({
   lock_timeout: env.DB_LOCK_TIMEOUT_MS,
   application_name: 'stockpulse-api',
   family: 4, // <-- ADDED: Forces IPv4 to fix Render's ENETUNREACH cloud deployment crash
-  ssl: isProduction ? { rejectUnauthorized: false } : false, // <-- ADDED: Ensures secure cloud DB handshake
-
+  ssl: {
+    rejectUnauthorized: false // <-- This fixes the self-signed certificate error
+  }
 });
 
 // A pool-level error means an *idle* client died (network blip, DB restart).
