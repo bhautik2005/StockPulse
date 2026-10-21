@@ -51,14 +51,19 @@ npm run migrate
 npm run seed
 ```
 
-**Option B: Run Migrations via Supabase SQL Editor**
+**Do not apply the migration SQL manually in the Supabase SQL Editor.** The
+application's migration runner records applied migrations and their checksums
+in `schema_migrations`. Running the SQL by itself creates the tables but does
+not record that history; the next Render startup then tries to create those
+tables again and fails with `relation "users" already exists`.
 
-1. In Supabase Dashboard → **SQL Editor** → **New Query**.
-2. Copy the entire contents of `src/db/migrations/001_init.sql`.
-3. Paste and **Run**. This creates all tables, indexes, constraints, triggers, and views.
-4. (Optional) Run the seed data by copying `src/db/seed.js` logic into SQL or run locally with `DATABASE_URL` pointing to Supabase.
+Use the migration runner for the initial setup and future migrations:
 
-> **Note:** The migration runner tracks applied migrations in a `schema_migrations` table with checksums. Running via SQL Editor is fine for initial setup; subsequent deploys should use the migration runner (e.g., in a CI step or Render `preDeploy` command).
+```bash
+DATABASE_URL="your-Supabase-connection-string" npm run migrate
+```
+
+Render also runs pending migrations automatically when the service starts.
 
 ### 1.3 Get the Correct Transaction Pooler URL (Port 6543)
 
@@ -237,13 +242,13 @@ This ensures all routes (`/dashboard`, `/orders/123`, etc.) serve `index.html`, 
 
 The frontend reads `VITE_API_URL` at build time (via `import.meta.env.VITE_API_URL` in `client/src/services/api.js`).
 
-**For production, it must point to your Render backend + `/api`:**
+**For production, point it to your Render backend origin (without `/api`):**
 
 ```
-https://stockpulse-api.onrender.com/api
+https://stockpulse-api.onrender.com
 ```
 
-> **Do not include a trailing slash.** The API client appends paths like `/auth/login`.
+> **Do not include `/api` or a trailing slash.** The API client adds paths such as `/api/auth/login`.
 
 ### 3.3 Deploy to Vercel
 
@@ -268,7 +273,7 @@ https://stockpulse-api.onrender.com/api
 
 | Name | Value | Environment |
 |------|-------|-------------|
-| `VITE_API_URL` | `https://stockpulse-api.onrender.com/api` | Production, Preview, Development |
+| `VITE_API_URL` | `https://stockpulse-api.onrender.com` | Production, Preview, Development |
 
 > **Note:** `VITE_` prefix is required for Vite to expose the variable to client code.
 
@@ -382,7 +387,7 @@ Login succeeds (200) but subsequent requests return `401 Unauthorized` or user a
 |-------|-----|
 | `COOKIE_SECURE=false` on HTTPS | Set `COOKIE_SECURE=true` in Render env vars. |
 | `CORS_ORIGIN` mismatch → cookies not sent | Fix `CORS_ORIGIN` as above. |
-| Frontend `VITE_API_URL` missing `/api` | Ensure `VITE_API_URL=https://stockpulse-api.onrender.com/api` |
+| Frontend API requests return 404 | Set `VITE_API_URL` to the backend origin only, without `/api` or a trailing slash. |
 | Cookie `SameSite` policy | Current code uses `SameSite=Lax` (default). Works for top-level navigation. If embedded in iframe, need `SameSite=None; Secure`. |
 | Clock skew (JWT expiry) | Ensure server time is synced (Render handles this). |
 
@@ -416,6 +421,45 @@ Redeploy on Vercel after adding/fixing.
 | `ECONNREFUSED` / `ETIMEDOUT` | Wrong host/port or Supabase paused | Verify Transaction Pooler host/port. Check Supabase status. |
 | `authentication failed` | Wrong password or URL-encoding | Re-check `DATABASE_URL` password encoding (§1.4). |
 | `database "StockPulse" does not exist` | Wrong database name | Supabase default DB is `postgres`. Use `/postgres` in URL. |
+| `Migration 001_init.sql failed: relation "users" already exists` | The schema was created manually, or the migration history was lost, so `001_init.sql` is not recorded in `schema_migrations`. | Follow the safe recovery steps below. Do not repeatedly redeploy or drop the database unless its data can be discarded. |
+
+#### Recovering an existing database after this migration error
+
+First, stop/retry the Render deploy only after fixing the database state. Back up
+the database before making changes.
+
+- **If the database has no data you need:** drop/recreate the `public` schema in
+  Supabase, then let Render start the app and apply the migration. This deletes
+  all objects and data in that schema.
+- **If you need to keep the existing data:** only mark `001_init.sql` as applied
+  if the existing schema was created from this exact migration and is complete.
+  Do not do this for a partial or older schema; the runner would skip the
+  migration while the application may expect missing tables or constraints.
+
+For a confirmed exact match, compute the checksum from the repository root:
+
+```bash
+node -e "const fs=require('node:fs'),c=require('node:crypto'); console.log(c.createHash('sha256').update(fs.readFileSync('src/db/migrations/001_init.sql')).digest('hex'))"
+```
+
+In Supabase SQL Editor, replace `<checksum-from-command>` below with the
+printed value and run:
+
+```sql
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  filename text PRIMARY KEY,
+  checksum text NOT NULL,
+  applied_at timestamptz NOT NULL DEFAULT now()
+);
+
+INSERT INTO schema_migrations (filename, checksum)
+VALUES ('001_init.sql', '<checksum-from-command>')
+ON CONFLICT (filename) DO NOTHING;
+```
+
+Then redeploy the Render service. The runner will validate the checksum and
+skip the already-applied migration. If the schema is incomplete, restore from a
+backup or plan a proper forward migration instead of marking it as applied.
 
 ---
 

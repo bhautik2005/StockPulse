@@ -4,7 +4,7 @@ import { Boxes, LogIn } from 'lucide-react';
 
 import { useAuth } from '../context/AuthContext.jsx';
 import { homePathFor } from '../lib/constants.js';
-import { describeError } from '../lib/errors.js';
+import { describeError, isNetworkError } from '../lib/errors.js';
 import { Alert } from '../components/ui/Feedback.jsx';
 import { Button } from '../components/ui/Button.jsx';
 import { Field, Input } from '../components/ui/Input.jsx';
@@ -52,7 +52,12 @@ export function Login() {
       const signedIn = await login(form);
       navigate(location.state?.from ?? homePathFor(signedIn.role), { replace: true });
     } catch (caught) {
-      setError(caught);
+      // Provide more specific error messages for network issues
+      if (isNetworkError(caught)) {
+        setError({ ...caught, message: 'Cannot reach the server. Please check your connection or try again later.' });
+      } else {
+        setError(caught);
+      }
     } finally {
       setSubmitting(false);
     }

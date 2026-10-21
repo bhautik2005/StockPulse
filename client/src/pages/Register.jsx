@@ -4,7 +4,7 @@ import { Boxes, UserPlus } from 'lucide-react';
 
 import { useAuth } from '../context/AuthContext.jsx';
 import { homePathFor } from '../lib/constants.js';
-import { describeError } from '../lib/errors.js';
+import { describeError, isConflictError, fieldErrorsOf } from '../lib/errors.js';
 import { Alert } from '../components/ui/Feedback.jsx';
 import { Button } from '../components/ui/Button.jsx';
 import { Field, Input } from '../components/ui/Input.jsx';
@@ -58,7 +58,14 @@ export function Register() {
       });
       navigate(homePathFor(created.role), { replace: true });
     } catch (caught) {
-      setError(caught);
+      // Handle 409 conflict specifically - user already exists
+      if (isConflictError(caught)) {
+        // For register, 409 typically means email already registered
+        setError(caught);
+        setErrors({ email: describeError(caught) });
+      } else {
+        setError(caught);
+      }
     } finally {
       setSubmitting(false);
     }

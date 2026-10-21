@@ -34,6 +34,11 @@ export function createApp() {
       // wildcard here causes browsers to reject the response outright.
       origin: env.CORS_ORIGIN.split(',').map((origin) => origin.trim()),
       credentials: true,
+      // Explicitly handle preflight requests
+      methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token', 'Idempotency-Key', 'X-Requested-With'],
+      exposedHeaders: ['X-Request-Id'],
+      maxAge: 86400, // Cache preflight for 24 hours
     }),
   );
   // A bounded body size: an unbounded JSON parser is a trivial memory DoS.
