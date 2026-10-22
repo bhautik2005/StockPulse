@@ -49,7 +49,7 @@ export function createApp() {
         // Allow requests with no origin (like mobile apps, Postman, or server-to-server requests)
         if (!origin) return callback(null, true);
 
-        if (baseAllowedOrigins.includes(origin)) {
+        if (baseAllowedOrigins.includes(origin)|| origin.endsWith('.vercel.app')) {
           return callback(null, true);
         }
         return callback(new Error('Not allowed by CORS policy'), false);
