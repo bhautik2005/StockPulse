@@ -214,6 +214,8 @@ describe('P0 :: RBAC and warehouse scoping', () => {
     const api = createApiClient(server.baseUrl);
     await api.login(world.clients.acme.email, world.clients.acme.password);
     assert.ok(api.cookies.has('sp_csrf'), 'a CSRF cookie should be issued at sign-in');
+    const profile = await api.get('/api/auth/me');
+    assert.equal(profile.body.meta.csrf_token, api.cookies.get('sp_csrf'));
 
     const withoutToken = await api.post(
       '/api/orders',

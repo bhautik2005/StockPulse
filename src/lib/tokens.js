@@ -32,8 +32,8 @@ export function ttlToMs(ttl, fallbackMs = 15 * 60 * 1000) {
 export function authCookieOptions() {
   return {
     httpOnly: true,
-    sameSite: 'lax',
-    secure: env.COOKIE_SECURE,
+    sameSite: env.isProduction ? 'none' : 'lax',
+    secure: env.isProduction || env.COOKIE_SECURE,
     path: '/',
     // Kept in step with the token lifetime so the browser cannot hold a session
     // cookie longer than the token inside it is valid.

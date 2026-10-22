@@ -184,7 +184,7 @@ export const pool = new Pool({
 | `JWT_SECRET` | `your-64-char-random-string` | **Secret** — generate with `openssl rand -base64 48`. Must be ≥32 chars. |
 | `NODE_ENV` | `production` | Required for `family: 4` and `trust proxy` logic. |
 | `CORS_ORIGIN` | `https://your-vercel-app.vercel.app` | Comma-separated if multiple. Must match frontend origin exactly. |
-| `COOKIE_SECURE` | `true` | Required for HTTPS (Vercel + Render are HTTPS). |
+| `COOKIE_SECURE` | `true` | Required for HTTPS. Production always forces Secure cookies. |
 | `LOG_LEVEL` | `info` | Or `warn` for less noise. |
 | `PORT` | `10000` | Render assigns `PORT` env var automatically; this is a fallback. |
 
@@ -295,7 +295,7 @@ After Vercel deployment, update the Render backend's `CORS_ORIGIN`:
    ```
    https://stockpulse.vercel.app
    ```
-   (Add `,https://staging-stockpulse.vercel.app` for preview deployments if needed.)
+   (Add `,https://staging-stockpulse.vercel.app` for preview deployments if needed. Only exact origins listed here are allowed.)
 3. **Save Changes** → Render will auto-redeploy.
 
 ---
@@ -327,8 +327,8 @@ curl -I https://stockpulse.vercel.app
    - **Admin**: `admin@stockpulse.dev` / `AdminPass1234`
    - **Client**: `client@acme.dev` / `ClientPass1234`
 4. Verify:
-   - Login succeeds (cookie `sp_token` set, `HttpOnly`, `Secure`, `SameSite=Lax`).
-   - `sp_csrf` cookie set (readable, for CSRF double-submit).
+   - Login succeeds (cookie `sp_token` set, `HttpOnly`, `Secure`, `SameSite=None`).
+   - `sp_csrf` cookie set (`SameSite=None`) and the CSRF value is available to the SPA from the login response and `/api/auth/me`.
    - Redirect to dashboard / catalogue.
    - API calls in Network tab show `200 OK` with JSON data.
 
@@ -388,11 +388,12 @@ Login succeeds (200) but subsequent requests return `401 Unauthorized` or user a
 | `COOKIE_SECURE=false` on HTTPS | Set `COOKIE_SECURE=true` in Render env vars. |
 | `CORS_ORIGIN` mismatch → cookies not sent | Fix `CORS_ORIGIN` as above. |
 | Frontend API requests return 404 | Set `VITE_API_URL` to the backend origin only, without `/api` or a trailing slash. |
-| Cookie `SameSite` policy | Current code uses `SameSite=Lax` (default). Works for top-level navigation. If embedded in iframe, need `SameSite=None; Secure`. |
+| Cookie `SameSite` policy | Vercel and `onrender.com` are cross-site, so production cookies use `SameSite=None; Secure`. |
+| Browser blocks third-party cookies | Prefer custom frontend/API domains under the same registrable domain (for example, `app.example.com` and `api.example.com`) or proxy API requests through the frontend domain. |
 | Clock skew (JWT expiry) | Ensure server time is synced (Render handles this). |
 
 **Debug:**  
-Check `sp_token` cookie in DevTools → Application → Cookies. Verify `Secure`, `HttpOnly`, `SameSite=Lax`, `Domain=.onrender.com` (or your custom domain).
+Check `sp_token` under the Render API host in DevTools → Application → Cookies. Verify `Secure`, `HttpOnly`, and `SameSite=None`. Do not set a broad cookie `Domain`; the API host should own its session cookie.
 
 ---
 

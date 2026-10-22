@@ -7,7 +7,7 @@ The intermittent CORS errors and authentication failures stem from **environment
 | Issue | Cause | Impact |
 |-------|-------|--------|
 | CORS errors on some requests | `CORS_ORIGIN` on Render doesn't match Vercel URL exactly | Preflight OPTIONS requests fail, cookies not sent |
-| 401 on `/api/auth/me` after login | Cookies blocked due to CORS mismatch + `COOKIE_SECURE=false` on HTTPS | Session cookie not sent with subsequent requests |
+| 401 on `/api/auth/me` after login | `SameSite=Lax` prevents the browser sending the session cookie on cross-site API fetches; `Secure` must also be enabled for `SameSite=None` | Session cookie not sent with subsequent requests |
 | 409 on `/api/auth/register` | User already exists (expected behavior) | Needs graceful UI handling |
 
 ---
@@ -19,13 +19,13 @@ The intermittent CORS errors and authentication failures stem from **environment
 Update these in your Render service settings:
 
 ```bash
-# Exact Vercel URL - NO trailing slash, NO /api
+# Exact Vercel origin(s), comma-separated - NO trailing slash, NO /api
 CORS_ORIGIN=https://stock-pulse-theta-henna.vercel.app
 
-# Required for HTTPS (Vercel + Render both use HTTPS)
+# Production forces Secure cookies; keep this true for clarity
 COOKIE_SECURE=true
 
-# Production mode enables trust proxy and other security features
+# Production mode enables cross-site cookies and trust proxy
 NODE_ENV=production
 ```
 
@@ -63,9 +63,9 @@ curl -H "Origin: https://stock-pulse-theta-henna.vercel.app" \
 
 ## Code Changes Made
 
-### Backend: `src/app.js` - Enhanced CORS Configuration
+### Backend: `src/app.js` - Explicit CORS allowlist
 
-Added explicit preflight handling:
+The backend allows only the exact origins in `CORS_ORIGIN`; list each production and preview origin explicitly:
 ```javascript
 app.use(cors({
   origin: env.CORS_ORIGIN.split(',').map((origin) => origin.trim()),
@@ -126,9 +126,9 @@ Added helper functions for better error categorization:
         │                                    │
         │ 2. Response: 200 OK               │
         │    Set-Cookie: sp_token=...;       │
-        │    HttpOnly; Secure; SameSite=Lax  │
+        │    HttpOnly; Secure; SameSite=None│
         │    Set-Cookie: sp_csrf=...;        │
-        │    (readable for CSRF)             │
+        │    (returned to SPA for CSRF)      │
         │    ◄─────────────────────────────  │
         │                                    │
         │ 3. GET /api/auth/me (with cookie)  │
@@ -141,10 +141,11 @@ Added helper functions for better error categorization:
 ```
 
 **Critical Requirements:**
-1. `CORS_ORIGIN` must exactly match the frontend origin (protocol + domain + port)
-2. `COOKIE_SECURE=true` for HTTPS (required for `Secure` cookie flag)
+1. `CORS_ORIGIN` must list the exact frontend origin (protocol + domain + port)
+2. Production auth and CSRF cookies use `SameSite=None; Secure`
 3. `credentials: 'include'` on all frontend fetch requests
 4. Backend sets `Access-Control-Allow-Credentials: true`
+5. The SPA caches the CSRF token from login and `/api/auth/me`; it does not try to read the API host's cookie or store a JWT in localStorage.
 
 ---
 
@@ -167,8 +168,8 @@ If issues persist after configuration:
    - Response: `access-control-allow-credentials: true`
 
 2. **Application Tab** → Cookies
-   - `sp_token`: HttpOnly ✓, Secure ✓, SameSite=Lax
-   - `sp_csrf`: HttpOnly ✗ (readable), Secure ✓, SameSite=Lax
+   - `sp_token`: HttpOnly ✓, Secure ✓, SameSite=None
+   - `sp_csrf`: HttpOnly ✗, Secure ✓, SameSite=None
 
 3. **Console**
    - Look for CORS error messages
@@ -180,7 +181,7 @@ If issues persist after configuration:
 | `CORS_ORIGIN=https://stock-pulse-theta-henna.vercel.app/` (trailing slash) | Remove trailing slash |
 | `CORS_ORIGIN=*` with `credentials: true` | Never use `*` with credentials |
 | `VITE_API_URL=https://stockpulse-pgnq.onrender.com/api` | Remove `/api` |
-| `COOKIE_SECURE=false` on production | Set to `true` |
+| `COOKIE_SECURE=false` on production | Set to `true`; production code also forces secure cookies |
 | Multiple origins without comma separation | Use `origin1,origin2` format |
 
 ---

@@ -49,15 +49,10 @@ export function createApp() {
         // Allow requests with no origin (like mobile apps, Postman, or server-to-server requests)
         if (!origin) return callback(null, true);
 
-        // Check if the origin matches explicit environment list OR is any Vercel deployment (*.vercel.app)
-        const isAllowedExplicitly = baseAllowedOrigins.includes(origin);
-        const isVercelPreview = origin.endsWith('.vercel.app');
-
-        if (isAllowedExplicitly || isVercelPreview) {
+        if (baseAllowedOrigins.includes(origin)) {
           return callback(null, true);
-        } else {
-          return callback(new Error('Not allowed by CORS policy'), false);
         }
+        return callback(new Error('Not allowed by CORS policy'), false);
       },
       credentials: true, // Required for cookies and authorization headers
       methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],

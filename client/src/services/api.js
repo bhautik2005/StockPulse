@@ -9,9 +9,9 @@
  *     point of the HttpOnly cookie is that it cannot be read.
  *
  *  2. `X-CSRF-Token` on writes -- the server protects cookie-authenticated
- *     mutations with a double-submit token: a readable `sp_csrf` cookie that
- *     must be echoed in a header. A cross-site attacker can send the request but
- *     cannot read the cookie to fill in the header.
+ *     mutations with a double-submit token. Cross-origin clients keep the value
+ *     from login or `/me` in memory because they cannot read the API host's
+ *     cookie; same-origin clients can fall back to reading that cookie.
  *
  *  3. Errors keep their machine-readable `code` and `details`. A 409
  *     INSUFFICIENT_STOCK carries per-line numbers, which is what lets the UI say
@@ -63,6 +63,7 @@ export class ApiError extends Error {
 }
 
 let onUnauthorized = null;
+let csrfToken = null;
 
 /**
  * Lets the auth layer react to an expired or revoked session without every
@@ -99,7 +100,7 @@ export async function request(method, path, { body, query, headers = {}, idempot
   }
 
   if (method !== 'GET' && method !== 'HEAD') {
-    const csrf = readCookie(CSRF_COOKIE);
+    const csrf = csrfToken ?? readCookie(CSRF_COOKIE);
     if (csrf) finalHeaders[CSRF_HEADER] = csrf;
   }
 
@@ -126,15 +127,20 @@ export async function request(method, path, { body, query, headers = {}, idempot
   }
 
   const payload = await parse(response);
+  if (typeof payload?.meta?.csrf_token === 'string') {
+    csrfToken = payload.meta.csrf_token;
+  }
 
   if (!response.ok) {
     const error = new ApiError(response.status, payload);
+    if (response.status === 401) csrfToken = null;
     if (response.status === 401 && !SILENT_401.some((prefix) => path.startsWith(prefix))) {
       onUnauthorized?.(error);
     }
     throw error;
   }
 
+  if (response.status === 204 && path.startsWith('/api/auth/logout')) csrfToken = null;
   return payload;
 }
 

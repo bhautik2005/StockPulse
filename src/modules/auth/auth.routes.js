@@ -109,7 +109,10 @@ authRouter.get(
   attachWarehouseScope,
   asyncHandler(async (req, res) => {
     const profile = await service.getProfile(req.user.id);
-    res.json({ data: { ...profile, scope: req.warehouseScope } });
+    res.json({
+      data: { ...profile, scope: req.warehouseScope },
+      meta: { csrf_token: req.cookies?.[env.CSRF_COOKIE_NAME] ?? null },
+    });
   }),
 );
 

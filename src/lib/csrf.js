@@ -5,10 +5,10 @@
  * cross-site requests automatically. Without protection, any site could POST
  * /api/orders on a logged-in user's behalf with no way for the user to notice.
  *
- * Double-submit pattern: a second, deliberately readable cookie (`sp_csrf`)
- * holds a random value that the frontend must echo back in the `X-CSRF-Token`
- * header. A cross-origin attacker can trigger the request but cannot read the
- * cookie to populate the header.
+ * Double-submit pattern: a second cookie (`sp_csrf`) holds a random value that
+ * the frontend must echo back in the `X-CSRF-Token` header. For cross-origin
+ * SPAs, the API returns this value in trusted login/profile responses because
+ * frontend JavaScript cannot read a cookie scoped to the API host.
  *
  * Requests authenticated with `Authorization: Bearer` are exempt: they are not
  * attached ambiently by a browser, so they carry no CSRF risk (this is what
@@ -26,9 +26,9 @@ export function generateCsrfToken() {
 
 export function csrfCookieOptions() {
   return {
-    httpOnly: false, // intentionally readable: the SPA must echo it back
-    sameSite: 'lax',
-    secure: env.COOKIE_SECURE,
+    httpOnly: false, // supports same-origin clients; cross-origin clients use the response token
+    sameSite: env.isProduction ? 'none' : 'lax',
+    secure: env.isProduction || env.COOKIE_SECURE,
     path: '/',
   };
 }
