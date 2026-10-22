@@ -19,7 +19,7 @@ export function describeError(error) {
       return error.message;
     case 409:
       // Check for specific conflict codes
-      if (error.code === 'USER_EXISTS') {
+      if (error.code === 'EMAIL_IN_USE' || error.code === 'USER_EXISTS') {
         return 'An account with this email already exists. Please sign in instead.';
       }
       if (error.code === 'EMAIL_TAKEN') {

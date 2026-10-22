@@ -37,7 +37,7 @@ export function AuthProvider({ children }) {
       setStatus('anonymous');
       // A 401 here is the normal "nobody is signed in" answer, not a failure
       // worth showing. Anything else (the API being down) is worth showing.
-      if (error.status !== 401) setBootError(error);
+      setBootError(error.status === 401 ? null : error);
     }
   }, []);
 
