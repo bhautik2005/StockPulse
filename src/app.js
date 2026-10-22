@@ -27,19 +27,44 @@ export function createApp() {
   // logging depend on trusting exactly one hop.
   if (env.isProduction) app.set('trust proxy', 1);
 
+  // Get allowed origins from environment variables (comma-separated list)
+  const baseAllowedOrigins = env.CORS_ORIGIN
+    ? env.CORS_ORIGIN.split(',').map((origin) => origin.trim())
+    : ['http://localhost:5173'];
+
   app.use(helmet());
   app.use(
     cors({
-      // `credentials: true` requires an explicit origin list, never '*'. A
-      // wildcard here causes browsers to reject the response outright.
-      origin: env.CORS_ORIGIN.split(',').map((origin) => origin.trim()),
-      credentials: true,
-      // Explicitly handle preflight requests
+      //   // `credentials: true` requires an explicit origin list, never '*'. A
+      //   // wildcard here causes browsers to reject the response outright.
+      //   origin: env.CORS_ORIGIN.split(',').map((origin) => origin.trim()),
+      //   credentials: true,
+      //   // Explicitly handle preflight requests
+      //   methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+      //   allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token', 'Idempotency-Key', 'X-Requested-With'],
+      //   exposedHeaders: ['X-Request-Id'],
+      //   maxAge: 86400, // Cache preflight for 24 hours
+      // }),
+      origin: (origin, callback) => {
+        // Allow requests with no origin (like mobile apps, Postman, or server-to-server requests)
+        if (!origin) return callback(null, true);
+
+        // Check if the origin matches explicit environment list OR is any Vercel deployment (*.vercel.app)
+        const isAllowedExplicitly = baseAllowedOrigins.includes(origin);
+        const isVercelPreview = origin.endsWith('.vercel.app');
+
+        if (isAllowedExplicitly || isVercelPreview) {
+          return callback(null, true);
+        } else {
+          return callback(new Error('Not allowed by CORS policy'), false);
+        }
+      },
+      credentials: true, // Required for cookies and authorization headers
       methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
       allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token', 'Idempotency-Key', 'X-Requested-With'],
       exposedHeaders: ['X-Request-Id'],
       maxAge: 86400, // Cache preflight for 24 hours
-    }),
+    })
   );
   // A bounded body size: an unbounded JSON parser is a trivial memory DoS.
   app.use(express.json({ limit: '256kb' }));
