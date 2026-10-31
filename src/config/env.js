@@ -36,6 +36,47 @@ const schema = z.object({
   CORS_ORIGIN: z.string().default('http://localhost:5173'),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error', 'silent']).default('info'),
 
+  /*
+   * Brute-force protection on POST /api/auth/login.
+   *
+   * RATE_LIMIT_ENABLED defaults to "on everywhere except tests", so the suite is
+   * not throttled by its own fixtures. The QA suite turns it on explicitly to
+   * prove the 429 path actually works (phase4/tests/rate-limiting.test.js),
+   * rather than trusting a limiter that no test ever executes.
+   */
+  RATE_LIMIT_ENABLED: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((value) => (value === undefined ? undefined : value === 'true')),
+  RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(15 * 60 * 1000),
+  RATE_LIMIT_MAX: z.coerce.number().int().positive().default(10),
+
+  /**
+   * How many reverse proxies sit in front of the app, for Express `trust proxy`.
+   *
+   * This is a security setting, not a deployment detail. It decides which value
+   * `req.ip` returns, and `req.ip` keys the login rate limiter:
+   *
+   *   - too low  -> every request appears to come from the proxy, so one
+   *                 attacker exhausts the single shared bucket and locks out
+   *                 every real user. A denial of service against the whole app.
+   *   - too high -> Express trusts an X-Forwarded-For entry the client supplied,
+   *                 so an attacker sends a fresh fake IP per request and the
+   *                 limiter never fires. Brute-force protection is gone.
+   *
+   * `1` is correct for Vercel/Render/Heroku (one edge proxy). Use `false` when
+   * the process is reached directly, and a subnet/CIDR string for anything else.
+   */
+  TRUST_PROXY: z
+    .enum(['true', 'false', '1', '2'])
+    .optional()
+    .transform((value) => {
+      if (value === undefined) return undefined;
+      if (value === 'false') return false;
+      if (value === 'true') return true;
+      return Number(value);
+    }),
+
   ORDER_MAX_LINES: z.coerce.number().int().positive().max(1000).default(200),
   ORDER_MAX_QUANTITY_PER_LINE: z.coerce.number().int().positive().default(100_000),
 }).superRefine((value, ctx) => {
@@ -63,6 +104,17 @@ export const env = Object.freeze({
   ...parsed.data,
   isProduction: parsed.data.NODE_ENV === 'production',
   isTest: parsed.data.NODE_ENV === 'test',
+  /** Rate limiting is on by default, but never inside the test environment. */
+  isRateLimitEnabled:
+    parsed.data.RATE_LIMIT_ENABLED ?? parsed.data.NODE_ENV !== 'test',
+  /**
+   * One trusted hop in production; nothing trusted otherwise.
+   *
+   * Defaulting to `false` outside production keeps a locally-run server honest:
+   * a direct client can set X-Forwarded-For freely, so trusting it would let
+   * anyone forge their own IP and sidestep the login limiter.
+   */
+  trustProxy: parsed.data.TRUST_PROXY ?? (parsed.data.NODE_ENV === 'production' ? 1 : false),
 });
 
 /** Roles recognised by the system. Kept in one place to avoid string drift. */

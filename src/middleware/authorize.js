@@ -96,3 +96,13 @@ export function requireWarehouseAccess(getWarehouseId) {
     return next();
   };
 }
+
+/** Route guard for an optional warehouse_id query parameter. */
+export function requireWarehouseQueryAccess(getWarehouseId) {
+  const requireAccess = requireWarehouseAccess(getWarehouseId);
+
+  return (req, res, next) => {
+    if (getWarehouseId(req) === undefined || getWarehouseId(req) === null) return next();
+    return requireAccess(req, res, next);
+  };
+}

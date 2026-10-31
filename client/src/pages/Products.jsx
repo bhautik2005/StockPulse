@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Archive, Package, PackagePlus, Pencil, Plus, Search, ShoppingCart, Upload, X } from 'lucide-react';
 
@@ -38,7 +38,12 @@ export function Products() {
   const searchInUrl = searchParams.get('search') ?? '';
 
   const [search, setSearch] = useState(searchInUrl);
+  const previousSearchInUrl = useRef(searchInUrl);
   const debouncedSearch = useDebouncedValue(search, 350);
+
+  useEffect(() => {
+    setSearch(searchInUrl);
+  }, [searchInUrl]);
 
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
@@ -66,6 +71,11 @@ export function Products() {
   );
 
   useEffect(() => {
+    if (previousSearchInUrl.current !== searchInUrl) {
+      previousSearchInUrl.current = searchInUrl;
+      return;
+    }
+    if (debouncedSearch !== search) return;
     if (debouncedSearch === searchInUrl) return;
     setSearchParams(
       (current) => {
@@ -77,7 +87,7 @@ export function Products() {
       },
       { replace: true },
     );
-  }, [debouncedSearch, searchInUrl, setSearchParams]);
+  }, [debouncedSearch, search, searchInUrl, setSearchParams]);
 
   function updateParams(changes) {
     setSearchParams((current) => {
@@ -92,19 +102,8 @@ export function Products() {
   }
 
   const rows = products.data ?? [];
-  const meta = products.meta ?? { page, limit: 20, total: 0 };
-
-  /*
-   * Categories are derived from what is loaded, because the API has no
-   * categories endpoint. They therefore describe this page's products rather
-   * than the whole catalogue -- which is why the strip is labelled as a filter
-   * over the current view and not as a complete taxonomy.
-   */
-  const categories = useMemo(() => {
-    const found = new Set();
-    for (const product of rows) if (product.category) found.add(product.category);
-    return [...found].sort();
-  }, [rows]);
+  const meta = products.meta ?? { page, limit: 20, total: 0, categories: [] };
+  const categories = meta.categories ?? [];
 
   function openCreate() {
     setForm(EMPTY_FORM);
@@ -176,7 +175,7 @@ export function Products() {
           </h2>
           <p className="text-xs text-muted-foreground">
             {manages
-              ? `${meta.total} product${meta.total === 1 ? '' : 's'} in the catalogue.`
+              ? `${meta.total} ${includeInactive ? 'product' : 'active product'}${meta.total === 1 ? '' : 's'} ${meta.total === 1 ? 'matches' : 'match'} the current filters${includeInactive ? ', including archived products.' : '.'}`
               : `${meta.total} product${meta.total === 1 ? '' : 's'} available to order.`}
           </p>
         </div>
@@ -238,9 +237,16 @@ export function Products() {
           ) : null}
         </CardToolbar>
 
-        {categories.length > 1 || category ? (
+        {/*
+          The rail is rendered from the catalogue's full taxonomy (meta.categories),
+          never from the rows currently on screen -- deriving it from `rows` is what
+          used to make the other categories vanish as soon as one was selected.
+          Every tab therefore stays visible; `category` only drives the query.
+        */}
+        {categories.length > 0 || category ? (
           <CardToolbar className="border-t border-border">
             <Tabs
+              variant="filter"
               value={category}
               onValueChange={(value) => updateParams({ category: value })}
               tabs={[{ value: '', label: 'All categories' }, ...categories.map((name) => ({ value: name, label: name }))]}
@@ -255,10 +261,12 @@ export function Products() {
         ) : rows.length === 0 ? (
           <EmptyState
             icon={manages ? PackagePlus : Package}
-            title={searchInUrl || category ? 'No products match' : 'The catalogue is empty'}
+            title={searchInUrl || category || includeInactive ? 'No products match' : 'The catalogue is empty'}
             description={
               manages
-                ? 'Add a product to start tracking it across warehouses.'
+                ? includeInactive
+                  ? 'Try changing the search or category filters.'
+                  : 'Add a product to start tracking it across warehouses.'
                 : 'Nothing is available to order right now.'
             }
             action={manages && !searchInUrl ? <Button onClick={openCreate}>Add product</Button> : null}
@@ -284,7 +292,10 @@ export function Products() {
                   const low = manages && !out && onHand <= (product.reorder_level ?? 0);
 
                   return (
-                    <TR key={product.id}>
+                    <TR
+                      key={product.id}
+                      className={product.is_active ? undefined : 'bg-muted/40 hover:bg-muted/60'}
+                    >
                       <TD>
                         <div className="flex items-center gap-2.5">
                           {/* No image column exists in the schema, so a monogram

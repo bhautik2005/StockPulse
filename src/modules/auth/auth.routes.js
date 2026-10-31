@@ -28,25 +28,53 @@ export const usersRouter = Router();
 /**
  * Credential stuffing / brute force protection.
  *
- * Disabled under NODE_ENV=test so the suite can sign in freely; it is active in
- * development and production.
+ * Exported as a factory for three reasons:
+ *
+ *  1. The counter store belongs to the limiter instance. Building a fresh one in
+ *     a test starts its counters at zero, so the 429 path can be proven without
+ *     waiting for a window to expire or burning the real limiter's budget.
+ *  2. `skip` is driven by configuration (RATE_LIMIT_ENABLED), not by a
+ *     hard-coded NODE_ENV check, so "is brute-force protection on?" becomes a
+ *     deployment decision that a test can verify.
+ *  3. A limiter no test ever executes is indistinguishable from one that does
+ *     not work.
+ *
+ * Keyed by IP + email. Keying on IP alone lets an attacker behind a botnet spray
+ * one password across many accounts; keying on the account alone lets a single
+ * host lock a legitimate user out.
  */
-const loginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 10,
-  standardHeaders: 'draft-7',
-  legacyHeaders: false,
-  skip: () => env.isTest,
-  handler: (req, res) => {
-    res.status(429).json({
-      error: {
-        code: 'RATE_LIMITED',
-        message: 'Too many sign-in attempts. Try again in a few minutes.',
-        requestId: req.id,
-      },
-    });
-  },
-});
+export function createLoginLimiter({
+  windowMs = env.RATE_LIMIT_WINDOW_MS,
+  max = env.RATE_LIMIT_MAX,
+  enabled = env.isRateLimitEnabled,
+} = {}) {
+  return rateLimit({
+    windowMs,
+    limit: max,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    skip: () => !enabled,
+    keyGenerator: (req) => {
+      const raw = req.ip ?? '';
+      // Collapse IPv6 to its /56 network: without this a single client holds
+      // thousands of distinct keys and the limit means nothing.
+      const ip = raw.includes(':') ? raw.split(':').slice(0, 4).join(':') : raw;
+      const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : 'anonymous';
+      return `${ip}:${email}`;
+    },
+    handler: (req, res) => {
+      res.status(429).json({
+        error: {
+          code: 'RATE_LIMITED',
+          message: 'Too many sign-in attempts. Try again in a few minutes.',
+          requestId: req.id,
+        },
+      });
+    },
+  });
+}
+
+const loginLimiter = createLoginLimiter();
 
 /** Public sign-up. Always creates a Client; internal roles need an Admin. */
 authRouter.post(

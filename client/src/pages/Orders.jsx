@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Eye, Plus, ShoppingCart } from 'lucide-react';
+import { Eye, Plus, ShoppingCart, Upload } from 'lucide-react';
 
 import { useAuth } from '../context/AuthContext.jsx';
 import { useApiResource } from '../hooks/useApiResource.js';
@@ -9,6 +9,7 @@ import { formatMoney, formatRelative } from '../lib/format.js';
 import { ordersApi, warehousesApi } from '../services/endpoints.js';
 import { OrderBuilderDialog } from '../components/orders/OrderBuilderDialog.jsx';
 import { OrderDetailDialog } from '../components/orders/OrderDetailDialog.jsx';
+import { OrderImportModal } from '../components/orders/OrderImportModal.jsx';
 import { StatusBadge } from '../components/ui/Badge.jsx';
 import { Button } from '../components/ui/Button.jsx';
 import { Card, CardToolbar } from '../components/ui/Card.jsx';
@@ -17,12 +18,17 @@ import { Input } from '../components/ui/Input.jsx';
 import { Pagination } from '../components/ui/Pagination.jsx';
 import { Table, TBody, TD, TDNumeric, TH, THead, TR } from '../components/ui/Table.jsx';
 import { Tabs } from '../components/ui/Tabs.jsx';
+import { useToast } from '../components/ui/Toast.jsx';
 
-/** Roles the API accepts an order from. A Manager reviews orders, never raises one. */
-const CAN_CREATE = [ROLES.CLIENT, ROLES.STAFF, ROLES.ADMIN];
+/** Roles the API accepts an order from. */
+const CAN_CREATE = [ROLES.CLIENT, ROLES.STAFF, ROLES.ADMIN, ROLES.MANAGER];
+
+/** Roles that may bulk-import orders (Admin + Manager only). */
+const CAN_BULK_IMPORT = [ROLES.ADMIN, ROLES.MANAGER];
 
 export function Orders() {
-  const { user, isInternal } = useAuth();
+  const { user, isInternal, scopeIds } = useAuth();
+  const toast = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const page = Number(searchParams.get('page') ?? 1);
@@ -33,8 +39,31 @@ export function Orders() {
 
   const [detailId, setDetailId] = useState(null);
   const [builderOpen, setBuilderOpen] = useState(searchParams.get('new') === '1');
+  const [importOpen, setImportOpen] = useState(false);
 
   const warehouses = useApiResource(() => warehousesApi.list({ limit: 100 }), [], { skip: !isInternal });
+
+  useEffect(() => {
+    if (user?.role !== ROLES.MANAGER || scopeIds.length === 0) return;
+
+    const assignedId = scopeIds.length === 1 ? String(scopeIds[0]) : null;
+    const currentId = searchParams.get('warehouse_id');
+    const currentIsAssigned = scopeIds.some((id) => String(id) === currentId);
+    if ((assignedId && currentId === assignedId) || (!assignedId && (!currentId || currentIsAssigned))) {
+      return;
+    }
+
+    setSearchParams(
+      (current) => {
+        const next = new URLSearchParams(current);
+        if (assignedId) next.set('warehouse_id', assignedId);
+        else next.delete('warehouse_id');
+        next.delete('page');
+        return next;
+      },
+      { replace: true },
+    );
+  }, [scopeIds, searchParams, setSearchParams, user?.role]);
 
   const orders = useApiResource(
     () =>
@@ -82,7 +111,8 @@ export function Orders() {
 
   const rows = orders.data ?? [];
   const meta = orders.meta ?? { page, limit: 20, total: 0 };
-  const canCreate = CAN_CREATE.includes(user?.role);
+  const canCreate = CAN_CREATE.map((r) => r.toLowerCase()).includes(user?.role?.toLowerCase());
+  const canBulkImport = CAN_BULK_IMPORT.map((r) => r.toLowerCase()).includes(user?.role?.toLowerCase());
   const hasFilters = Boolean(status || warehouseId || from || to);
 
   return (
@@ -98,12 +128,24 @@ export function Orders() {
           </p>
         </div>
 
-        {canCreate ? (
-          <Button onClick={() => setBuilderOpen(true)}>
-            <Plus className="h-4 w-4" aria-hidden="true" />
-            New order
-          </Button>
-        ) : null}
+        <div className="flex items-center gap-2">
+          {canBulkImport ? (
+            <Button
+              id="orders-import-trigger"
+              variant="outline"
+              onClick={() => setImportOpen(true)}
+            >
+              <Upload className="h-4 w-4" aria-hidden="true" />
+              Bulk order
+            </Button>
+          ) : null}
+          {canCreate ? (
+            <Button id="orders-new-trigger" onClick={() => setBuilderOpen(true)}>
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              New order
+            </Button>
+          ) : null}
+        </div>
       </div>
 
       <Card>
@@ -143,7 +185,11 @@ export function Orders() {
                 onChange={(event) => updateParams({ warehouse_id: event.target.value })}
                 aria-label="Filter by warehouse"
               >
-                <option value="">All warehouses</option>
+                {user?.role !== ROLES.MANAGER || scopeIds.length !== 1 ? (
+                  <option value="">
+                    {user?.role === ROLES.MANAGER ? 'All assigned warehouses' : 'All warehouses'}
+                  </option>
+                ) : null}
                 {(warehouses.data ?? []).map((warehouse) => (
                   <option key={warehouse.id} value={warehouse.id}>
                     {warehouse.code} — {warehouse.name}
@@ -248,6 +294,20 @@ export function Orders() {
         orderId={detailId}
         onClose={() => setDetailId(null)}
         onChanged={orders.reload}
+      />
+
+      <OrderImportModal
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onSuccess={(importResult) => {
+          orders.reload();
+          if (importResult?.orderNumber) {
+            toast.success(
+              'Bulk import complete',
+              `Order ${importResult.orderNumber} created with ${importResult.successCount} line${importResult.successCount === 1 ? '' : 's'}.`,
+            );
+          }
+        }}
       />
     </div>
   );

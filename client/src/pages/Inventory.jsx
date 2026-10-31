@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { AlertTriangle, Filter, PackageSearch, Search, SlidersHorizontal, X } from 'lucide-react';
 
+import { useAuth } from '../context/AuthContext.jsx';
 import { useApiResource, useDebouncedValue } from '../hooks/useApiResource.js';
+import { ROLES } from '../lib/constants.js';
 import { describeError } from '../lib/errors.js';
 import { formatAmount, formatMoney, formatNumber } from '../lib/format.js';
 import { inventoryApi, warehousesApi } from '../services/endpoints.js';
@@ -25,6 +27,7 @@ import { useToast } from '../components/ui/Toast.jsx';
  * exact same view.
  */
 export function Inventory() {
+  const { user, scopeIds } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const toast = useToast();
 
@@ -43,6 +46,28 @@ export function Inventory() {
   const debouncedSearch = useDebouncedValue(search, 350);
 
   const warehouses = useApiResource(() => warehousesApi.list({ limit: 100 }), []);
+
+  useEffect(() => {
+    if (user?.role !== ROLES.MANAGER || scopeIds.length === 0) return;
+
+    const assignedId = scopeIds.length === 1 ? String(scopeIds[0]) : null;
+    const currentId = searchParams.get('warehouse_id');
+    const currentIsAssigned = scopeIds.some((id) => String(id) === currentId);
+    if ((assignedId && currentId === assignedId) || (!assignedId && (!currentId || currentIsAssigned))) {
+      return;
+    }
+
+    setSearchParams(
+      (current) => {
+        const next = new URLSearchParams(current);
+        if (assignedId) next.set('warehouse_id', assignedId);
+        else next.delete('warehouse_id');
+        next.delete('page');
+        return next;
+      },
+      { replace: true },
+    );
+  }, [scopeIds, searchParams, setSearchParams, user?.role]);
 
   const inventory = useApiResource(
     () =>
@@ -163,7 +188,9 @@ export function Inventory() {
             onChange={(event) => updateParams({ warehouse_id: event.target.value })}
             aria-label="Filter by warehouse"
           >
-            <option value="">All warehouses</option>
+            <option value="">
+              {user?.role === ROLES.MANAGER ? 'All assigned warehouses' : 'All warehouses'}
+            </option>
             {(warehouses.data ?? []).map((warehouse) => (
               <option key={warehouse.id} value={warehouse.id}>
                 {warehouse.name} ({warehouse.code})

@@ -13,3 +13,8 @@ vendor/
 dist/
 .DS_Store
 Thumbs.db
+vitest.workspace.js
+*.csv
+*.xlsx
+project_users.txt
+IMPLEMENTATION_PLAN.md

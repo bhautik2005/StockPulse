@@ -19,6 +19,38 @@ const isProduction = process.env.NODE_ENV === 'production';
 
 const { Pool } = pg;
 
+/**
+ * TLS is negotiated only when the target actually speaks it.
+ *
+ * The managed database (Supabase) terminates TLS; a local PostgreSQL server --
+ * the bundled cluster, Docker Compose, or a CI service container -- does not,
+ * and asking it for SSL fails with "The server does not support SSL
+ * connections", which reads like an outage rather than a client misconfiguration.
+ *
+ * Overrides, in order of precedence:
+ *   PGSSLMODE=disable|allow|prefer|require|verify-ca|verify-full  (libpq spelling)
+ *   PG_SSL=true|false
+ *   NODE_ENV=production -> TLS on
+ *   otherwise           -> no TLS
+ */
+function sslConfig() {
+  const mode = process.env.PGSSLMODE;
+  if (mode === 'disable' || mode === 'allow' || mode === 'prefer') return false;
+  if (mode) return { rejectUnauthorized: false };
+
+  if (process.env.PG_SSL === 'false') return false;
+  if (process.env.PG_SSL === 'true') return { rejectUnauthorized: false };
+
+  try {
+    const url = new URL(env.DATABASE_URL);
+    if (['localhost', '127.0.0.1', 'db'].includes(url.hostname)) {
+      return false;
+    }
+  } catch {}
+
+  return isProduction ? { rejectUnauthorized: false } : false;
+}
+
 let databaseUrlDiagnostics;
 try {
   const databaseUrl = new URL(env.DATABASE_URL);
@@ -27,6 +59,7 @@ try {
     postgresScheme: ['postgres:', 'postgresql:'].includes(databaseUrl.protocol),
     hasHost: Boolean(databaseUrl.hostname),
     hasDatabase: Boolean(databaseUrl.pathname.slice(1)),
+    ssl: Boolean(sslConfig()),
   };
 } catch {
   databaseUrlDiagnostics = { parses: false };
@@ -42,9 +75,7 @@ export const pool = new Pool({
   lock_timeout: env.DB_LOCK_TIMEOUT_MS,
   application_name: 'stockpulse-api',
   family: 4, // <-- ADDED: Forces IPv4 to fix Render's ENETUNREACH cloud deployment crash
-  ssl: {
-    rejectUnauthorized: false // <-- This fixes the self-signed certificate error
-  }
+  ssl: sslConfig(),
 });
 
 // A pool-level error means an *idle* client died (network blip, DB restart).

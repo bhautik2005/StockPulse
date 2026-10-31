@@ -22,6 +22,7 @@ import { randomUUID } from 'node:crypto';
 import { pool, withTransaction } from '../../db/pool.js';
 import { AppError } from '../../errors/AppError.js';
 import { ROLES } from '../../config/env.js';
+import { assertWarehouseInScope } from '../../lib/warehouseScope.js';
 import * as repo from './orders.repository.js';
 
 /**
@@ -56,7 +57,7 @@ const ALLOWED_TRANSITIONS = Object.freeze({
  * `warehouse_id` is normalised to `null` for "let the service choose", which
  * keeps the merge key stable across the two passes (before and after allocation).
  */
-function mergeLines(items) {
+export function mergeLines(items) {
   const merged = new Map();
 
   for (const item of items) {
@@ -78,7 +79,7 @@ function mergeLines(items) {
   return [...merged.values()];
 }
 
-function assertQuantitiesWithinLimits(lines, maxPerLine) {
+export function assertQuantitiesWithinLimits(lines, maxPerLine) {
   const tooLarge = lines
     .filter((line) => line.qty > maxPerLine)
     .map((line) => ({
@@ -114,10 +115,14 @@ function assertQuantitiesWithinLimits(lines, maxPerLine) {
  * happens in the conditional UPDATE, so a poor choice here can never cause
  * overselling -- only a retryable conflict.
  */
-async function resolveWarehouses(db, lines) {
+async function resolveWarehouses(db, lines, scope) {
   const explicitIds = [...new Set(lines.filter((l) => l.warehouse_id).map((l) => l.warehouse_id))];
 
   if (explicitIds.length) {
+    if (scope !== undefined) {
+      for (const warehouseId of explicitIds) assertWarehouseInScope(scope, warehouseId);
+    }
+
     const { rows } = await repo.findActiveWarehouses(db, explicitIds);
     const found = new Set(rows.map((r) => Number(r.id)));
     const unknown = explicitIds.filter((id) => !found.has(id));
@@ -134,7 +139,7 @@ async function resolveWarehouses(db, lines) {
   if (needsAllocation.length === 0) return lines;
 
   const productIds = [...new Set(needsAllocation.map((l) => l.product_id))];
-  const { rows: candidates } = await repo.findStockCandidates(db, productIds);
+  const { rows: candidates } = await repo.findStockCandidates(db, productIds, scope);
 
   const byProduct = new Map();
   for (const candidate of candidates) {
@@ -236,6 +241,17 @@ function assertOrderVisible({ order, actor, scope }) {
   if (!visible) throw AppError.notFound('Order not found', 'ORDER_NOT_FOUND');
 }
 
+function restrictOrderToScope(order, scope) {
+  const items = order.items.filter((item) => scope?.ids?.includes(Number(item.warehouse.id)));
+  if (items.length === 0) throw AppError.notFound('Order not found', 'ORDER_NOT_FOUND');
+
+  const totalCents = items.reduce(
+    (total, item) => total + Math.round(Number(item.line_total) * 100),
+    0,
+  );
+  return { ...order, items, total_amount: (totalCents / 100).toFixed(2) };
+}
+
 // ---------------------------------------------------------------------------
 // Commands
 // ---------------------------------------------------------------------------
@@ -249,7 +265,18 @@ function isIdempotencyCollision(error) {
  *
  * @param {{ actor: {id:number, role:string}, items: Array, currency?: string, idempotencyKey?: string, limits: {maxLines:number, maxPerLine:number} }} params
  */
-export async function createOrder({ actor, items, currency = 'USD', idempotencyKey, limits }) {
+export async function createOrder({ actor, items, currency = 'USD', idempotencyKey, limits, scope }) {
+  const warehouseScope =
+    actor.role === ROLES.ADMIN || actor.role === ROLES.CLIENT ? undefined : scope;
+
+  if (
+    actor.role !== ROLES.ADMIN &&
+    actor.role !== ROLES.CLIENT &&
+    (!warehouseScope || (!warehouseScope.all && !warehouseScope.ids?.length))
+  ) {
+    throw AppError.forbidden('You do not have access to any warehouse', 'WAREHOUSE_FORBIDDEN');
+  }
+
   const key = idempotencyKey ?? randomUUID();
 
   const run = () =>
@@ -287,7 +314,7 @@ export async function createOrder({ actor, items, currency = 'USD', idempotencyK
       // 3. Resolve a warehouse per line, then merge again: an explicit line and
       //    an auto-allocated line can land on the same warehouse.
       const allocated = mergeLines(
-        (await resolveWarehouses(db, requested)).map((l) => ({
+        (await resolveWarehouses(db, requested, warehouseScope)).map((l) => ({
           product_id: l.product_id,
           warehouse_id: l.warehouse_id,
           quantity: l.qty,
@@ -372,7 +399,9 @@ export async function createOrder({ actor, items, currency = 'USD', idempotencyK
 export async function getOrder({ actor, orderId, scope }) {
   const order = await loadOrder(pool, orderId, { withHistory: true });
   assertOrderVisible({ order, actor, scope });
-  return order;
+  return actor.role === ROLES.ADMIN || actor.role === ROLES.CLIENT || scope?.all
+    ? order
+    : restrictOrderToScope(order, scope);
 }
 
 export async function listOrders({ actor, scope, filters }) {
@@ -381,7 +410,7 @@ export async function listOrders({ actor, scope, filters }) {
   const clientId = actor.role === ROLES.CLIENT ? actor.id : filters.client_id;
 
   return repo.listOrders(pool, {
-    scope,
+    scope: actor.role === ROLES.CLIENT ? undefined : scope,
     clientId,
     status: filters.status,
     warehouseId: filters.warehouse_id,
@@ -408,6 +437,15 @@ export async function cancelOrder({ actor, orderId, reason, scope }) {
       throw AppError.notFound('Order not found', 'ORDER_NOT_FOUND');
     }
 
+    const { rows: itemRows } = await repo.findOrderLinesForRestock(db, orderId);
+    if (
+      actor.role !== ROLES.ADMIN &&
+      actor.role !== ROLES.CLIENT &&
+      !itemRows.every((item) => scope?.all || scope?.ids?.includes(Number(item.warehouse_id)))
+    ) {
+      throw AppError.notFound('Order not found', 'ORDER_NOT_FOUND');
+    }
+
     if (order.status === 'Cancelled') {
       throw AppError.conflict('This order is already cancelled', 'ORDER_ALREADY_CANCELLED');
     }
@@ -419,7 +457,6 @@ export async function cancelOrder({ actor, orderId, reason, scope }) {
       );
     }
 
-    const { rows: itemRows } = await repo.findOrderLinesForRestock(db, orderId);
     const lines = itemRows.map((r) => ({
       product_id: r.product_id,
       warehouse_id: r.warehouse_id,
@@ -481,7 +518,8 @@ export async function updateOrderStatus({ actor, orderId, status, scope }) {
 
     if (!scope?.all) {
       const { rows: scoped } = await repo.findOrderItems(db, orderId);
-      const visible = scoped.some((item) => scope?.ids?.includes(Number(item.warehouse_id)));
+      const visible =
+        scoped.length > 0 && scoped.every((item) => scope?.ids?.includes(Number(item.warehouse_id)));
       if (!visible) throw AppError.notFound('Order not found', 'ORDER_NOT_FOUND');
     }
 

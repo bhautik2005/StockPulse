@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview --port 4173"
+    "preview": "vite preview --port 4173",
+    "qa:phase3": "vitest run ../qa-security-suite/phase3"
   },
   "dependencies": {
     "clsx": "^2.1.1",
@@ -21,14 +22,18 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.8",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
-    "eslint": "^10.13.0",
-    "eslint-plugin-react-hooks": "^7.1.1",
+    "esbuild": "^0.21.5",
     "globals": "^17.13.0",
+    "jsdom": "^25.0.1",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
-    "vite": "^5.4.11"
+    "vite": "^5.4.11",
+    "vitest": "^1.6.0"
   },
   "allowScripts": {
     "esbuild@0.21.5": true

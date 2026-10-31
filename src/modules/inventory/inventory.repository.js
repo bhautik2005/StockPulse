@@ -83,9 +83,16 @@ export function listLowStock(db, { scope, limit }) {
   const clause = warehouseScopeClause(scope, 'warehouse_id', params);
   params.push(limit);
 
+  /*
+   * The `low_stock` view already excludes archived products and deleted
+   * warehouses in its own definition. Repeating those predicates here was not
+   * merely redundant: the view does not project `is_active` or `deleted_at`, so
+   * referencing them made every call fail with
+   * `column "is_active" does not exist` and a 500.
+   */
   return db.query(
     `SELECT * FROM low_stock
-      WHERE ${clause} AND is_active = true AND deleted_at IS NULL
+      WHERE ${clause}
       ORDER BY units_below_threshold DESC, product_name ASC
       LIMIT $${params.length}`,
     params,

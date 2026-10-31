@@ -39,10 +39,10 @@ describe('P0 :: bulk product import', () => {
     form.append('file', new Blob(['sku,name,unit_price\nSKU-A,Product A,10.00'], { type: 'text/csv' }), 'test.csv');
     form.append('warehouse_id', world.warehouses.dubai.id);
 
-    const staffRes = await world.staffNairobi.api.post('/api/products/bulk-import', form);
+    const staffRes = await world.staff.nairobi.api.post('/api/products/bulk-import', form);
     assert.equal(staffRes.status, 403);
 
-    const clientRes = await world.clientA.api.post('/api/products/bulk-import', form);
+    const clientRes = await world.clients.acme.api.post('/api/products/bulk-import', form);
     assert.equal(clientRes.status, 403);
   });
 
@@ -68,7 +68,7 @@ describe('P0 :: bulk product import', () => {
     // Manager Lagos cannot import into Dubai warehouse
     form.append('warehouse_id', world.warehouses.dubai.id);
 
-    const res = await world.managerLagos.api.post('/api/products/bulk-import', form);
+    const res = await world.managers.lagos.api.post('/api/products/bulk-import', form);
     assert.equal(res.status, 403);
     assert.equal(res.body.error.code, 'WAREHOUSE_FORBIDDEN');
   });
@@ -86,7 +86,7 @@ describe('P0 :: bulk product import', () => {
     form.append('warehouse_id', world.warehouses.lagos.id);
     form.append('initial_stock', '12');
 
-    const res = await world.managerLagos.api.post('/api/products/bulk-import', form);
+    const res = await world.managers.lagos.api.post('/api/products/bulk-import', form);
     assert.equal(res.status, 200);
     assert.equal(res.body.data.successCount, 1);
     assert.equal(res.body.data.warehouse.id, world.warehouses.lagos.id);

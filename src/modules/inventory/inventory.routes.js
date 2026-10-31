@@ -11,7 +11,12 @@ import { ROLES } from '../../config/env.js';
 import { idParam, positiveInt } from '../../lib/commonSchemas.js';
 import { asyncHandler } from '../../middleware/asyncHandler.js';
 import { authenticate } from '../../middleware/authenticate.js';
-import { attachWarehouseScope, requireRole, requireWarehouseAccess } from '../../middleware/authorize.js';
+import {
+  attachWarehouseScope,
+  requireRole,
+  requireWarehouseAccess,
+  requireWarehouseQueryAccess,
+} from '../../middleware/authorize.js';
 import { validate } from '../../middleware/validate.js';
 import { adjustStockSchema, listInventoryQuery } from './inventory.schemas.js';
 import * as service from './inventory.service.js';
@@ -34,6 +39,7 @@ const ledgerQuery = z.object({
 inventoryRouter.get(
   '/',
   validate({ query: listInventoryQuery }),
+  requireWarehouseQueryAccess((req) => req.validatedQuery.warehouse_id),
   asyncHandler(async (req, res) => {
     const filters = req.validatedQuery;
     const { rows, total } = await service.listStock({ scope: req.warehouseScope, filters });
@@ -72,6 +78,7 @@ inventoryRouter.get(
 inventoryRouter.get(
   '/ledger',
   validate({ query: ledgerQuery }),
+  requireWarehouseQueryAccess((req) => req.validatedQuery.warehouse_id),
   asyncHandler(async (req, res) => {
     const rows = await service.listLedger({
       scope: req.warehouseScope,

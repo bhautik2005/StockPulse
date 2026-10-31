@@ -68,6 +68,12 @@ export const ordersApi = {
   cancel: (id, reason) => api.post(`/api/orders/${id}/cancel`, { reason }),
   updateStatus: (id, status, reason) =>
     api.patch(`/api/orders/${id}/status`, reason ? { status, reason } : { status }),
+  /**
+   * Bulk import orders from a FormData payload containing a .csv or .xlsx
+   * file. Pass an `idempotencyKey` UUID to make retries safe.
+   */
+  bulkImport: (formData, idempotencyKey) =>
+    api.post('/api/orders/bulk-import', formData, { idempotencyKey }),
 };
 
 export const analyticsApi = {

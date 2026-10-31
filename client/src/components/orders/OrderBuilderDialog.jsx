@@ -3,7 +3,7 @@ import { Plus, Search, ShoppingCart, Trash2, TriangleAlert } from 'lucide-react'
 
 import { useAuth } from '../../context/AuthContext.jsx';
 import { useApiResource, useDebouncedValue } from '../../hooks/useApiResource.js';
-import { canManageCatalogue } from '../../lib/constants.js';
+import { canManageCatalogue, ROLES } from '../../lib/constants.js';
 import { describeError } from '../../lib/errors.js';
 import { formatMoney, formatNumber } from '../../lib/format.js';
 import { newIdempotencyKey } from '../../lib/utils.js';
@@ -34,8 +34,11 @@ function formatCents(cents) {
 }
 
 export function OrderBuilderDialog({ open, onClose, onCreated, prefillProductId = null }) {
-  const { user, isClient, isInternal } = useAuth();
+  const { user, isClient, isInternal, scopeIds } = useAuth();
   const toast = useToast();
+  const isManager = user?.role === ROLES.MANAGER;
+  const assignedWarehouseId =
+    isManager && scopeIds.length === 1 ? String(scopeIds[0]) : '';
 
   // `/api/products` is Admin/Manager only; Staff and Clients read the catalogue
   // endpoint, which exposes aggregate availability and no warehouse breakdown.
@@ -108,13 +111,15 @@ export function OrderBuilderDialog({ open, onClose, onCreated, prefillProductId 
 
   function addProduct(product) {
     setLines((current) => {
-      const existing = current.find((line) => line.product_id === product.id && !line.warehouse_id);
+      const existing = current.find(
+        (line) => line.product_id === product.id && line.warehouse_id === assignedWarehouseId,
+      );
       if (existing) {
         return current.map((line) =>
           line === existing ? { ...line, quantity: line.quantity + 1 } : line,
         );
       }
-      return [...current, { product_id: product.id, quantity: 1, warehouse_id: '' }];
+      return [...current, { product_id: product.id, quantity: 1, warehouse_id: assignedWarehouseId }];
     });
   }
 
@@ -324,9 +329,14 @@ export function OrderBuilderDialog({ open, onClose, onCreated, prefillProductId 
                             <Select
                               {...props}
                               value={line.warehouse_id}
+                              disabled={isManager && scopeIds.length === 1}
                               onChange={(event) => updateLine(index, { warehouse_id: event.target.value })}
                             >
-                              <option value="">Auto — most stock</option>
+                              {!(isManager && scopeIds.length === 1) ? (
+                                <option value="">
+                                  {isManager ? 'Auto — assigned warehouses' : 'Auto — most stock'}
+                                </option>
+                              ) : null}
                               {(warehouses.data ?? []).map((warehouse) => (
                                 <option key={warehouse.id} value={warehouse.id}>
                                   {warehouse.code}

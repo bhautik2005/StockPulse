@@ -9,16 +9,21 @@
  */
 import { query } from '../../db/pool.js';
 import { AppError } from '../../errors/AppError.js';
+import { warehouseScopeClause } from '../../lib/warehouseScope.js';
 
-const STOCK_TOTAL_SUBQUERY = `
+function stockTotalSubquery(scope, params) {
+  const warehouseClause = scope === undefined ? 'TRUE' : warehouseScopeClause(scope, 'w.id', params);
+  return `
   COALESCE((
     SELECT sum(i.quantity)
       FROM inventory i
       JOIN warehouses w ON w.id = i.warehouse_id
      WHERE i.product_id = p.id
+       AND ${warehouseClause}
        AND w.is_active
        AND w.deleted_at IS NULL
   ), 0)::int AS total_quantity`;
+}
 
 function mapProduct(row) {
   return {
@@ -36,9 +41,11 @@ function mapProduct(row) {
 
 function buildFilters({ search, category, includeInactive }) {
   const params = [];
-  const clauses = ['p.deleted_at IS NULL'];
-
-  if (!includeInactive) clauses.push('p.is_active');
+  const clauses = [
+    includeInactive
+      ? '(p.deleted_at IS NULL OR NOT p.is_active)'
+      : 'p.deleted_at IS NULL AND p.is_active',
+  ];
   if (category) {
     params.push(category);
     clauses.push(`p.category = $${params.length}`);
@@ -51,37 +58,38 @@ function buildFilters({ search, category, includeInactive }) {
   return { clauses, params };
 }
 
-export async function listProducts({ search, category, includeInactive, limit, offset }) {
-  const { clauses, params } = buildFilters({ search, category, includeInactive });
-
-  params.push(limit, offset);
+/**
+ * The category taxonomy behind the filter rail.
+ *
+ * Deliberately ignores `search` AND `category`. The rail must offer every
+ * category at all times: deriving it from the currently filtered rows makes the
+ * buttons disappear the moment the user narrows the list -- including the very
+ * button they would need in order to widen it again. Only the archive view is
+ * honoured, so the rail never advertises a category that has nothing to show in
+ * the current view.
+ */
+async function listCategories({ includeInactive }) {
+  const { clauses, params } = buildFilters({ includeInactive });
   const { rows } = await query(
-    `SELECT p.id, p.sku, p.name, p.category, p.unit_price, p.reorder_level, p.is_active, p.created_at,
-            ${STOCK_TOTAL_SUBQUERY}
+    `SELECT DISTINCT p.category
        FROM products p
       WHERE ${clauses.join(' AND ')}
-      ORDER BY p.name ASC, p.id ASC
-      LIMIT $${params.length - 1} OFFSET $${params.length}`,
+        AND p.category IS NOT NULL
+      ORDER BY p.category`,
     params,
   );
-
-  const countParams = params.slice(0, params.length - 2);
-  const { rows: countRows } = await query(
-    `SELECT count(*)::int AS total FROM products p WHERE ${clauses.join(' AND ')}`,
-    countParams,
-  );
-
-  return { rows: rows.map(mapProduct), total: countRows[0].total };
+  return rows.map((row) => row.category);
 }
 
-/** Client-facing catalogue: active products, aggregate availability only. */
-export async function getCatalog({ search, category, limit, offset }) {
-  const { clauses, params } = buildFilters({ search, category, includeInactive: false });
+export async function listProducts({ search, category, includeInactive, limit, offset, scope }) {
+  const { clauses, params } = buildFilters({ search, category, includeInactive });
+  const countParams = [...params];
+  const stockTotals = stockTotalSubquery(scope, params);
 
   params.push(limit, offset);
   const { rows } = await query(
     `SELECT p.id, p.sku, p.name, p.category, p.unit_price, p.reorder_level, p.is_active, p.created_at,
-            ${STOCK_TOTAL_SUBQUERY}
+            ${stockTotals}
        FROM products p
       WHERE ${clauses.join(' AND ')}
       ORDER BY p.name ASC, p.id ASC
@@ -89,11 +97,35 @@ export async function getCatalog({ search, category, limit, offset }) {
     params,
   );
 
-  const countParams = params.slice(0, params.length - 2);
-  const { rows: countRows } = await query(
-    `SELECT count(*)::int AS total FROM products p WHERE ${clauses.join(' AND ')}`,
-    countParams,
+  const [{ rows: countRows }, categories] = await Promise.all([
+    query(`SELECT count(*)::int AS total FROM products p WHERE ${clauses.join(' AND ')}`, countParams),
+    listCategories({ includeInactive }),
+  ]);
+
+  return { rows: rows.map(mapProduct), total: countRows[0].total, categories };
+}
+
+/** Catalogue: active products and aggregate availability within the supplied scope. */
+export async function getCatalog({ search, category, limit, offset, scope }) {
+  const { clauses, params } = buildFilters({ search, category, includeInactive: false });
+  const countParams = [...params];
+  const stockTotals = stockTotalSubquery(scope, params);
+
+  params.push(limit, offset);
+  const { rows } = await query(
+    `SELECT p.id, p.sku, p.name, p.category, p.unit_price, p.reorder_level, p.is_active, p.created_at,
+            ${stockTotals}
+       FROM products p
+      WHERE ${clauses.join(' AND ')}
+      ORDER BY p.name ASC, p.id ASC
+      LIMIT $${params.length - 1} OFFSET $${params.length}`,
+    params,
   );
+
+  const [{ rows: countRows }, categories] = await Promise.all([
+    query(`SELECT count(*)::int AS total FROM products p WHERE ${clauses.join(' AND ')}`, countParams),
+    listCategories({ includeInactive: false }),
+  ]);
 
   return {
     rows: rows.map((row) => ({
@@ -107,16 +139,19 @@ export async function getCatalog({ search, category, limit, offset }) {
       in_stock: row.total_quantity > 0,
     })),
     total: countRows[0].total,
+    categories,
   };
 }
 
-export async function getProduct(productId) {
+export async function getProduct(productId, scope) {
+  const params = [productId];
+  const stockTotals = stockTotalSubquery(scope, params);
   const { rows } = await query(
     `SELECT p.id, p.sku, p.name, p.category, p.unit_price, p.reorder_level, p.is_active, p.created_at,
-            ${STOCK_TOTAL_SUBQUERY}
+            ${stockTotals}
        FROM products p
       WHERE p.id = $1 AND p.deleted_at IS NULL`,
-    [productId],
+    params,
   );
 
   if (rows.length === 0) throw AppError.notFound('Product not found', 'PRODUCT_NOT_FOUND');
@@ -143,7 +178,7 @@ export async function createProduct({ input }) {
   }
 }
 
-export async function updateProduct({ productId, patch }) {
+export async function updateProduct({ productId, patch, scope }) {
   try {
     const { rows } = await query(
       `UPDATE products
@@ -166,7 +201,7 @@ export async function updateProduct({ productId, patch }) {
     );
 
     if (rows.length === 0) throw AppError.notFound('Product not found', 'PRODUCT_NOT_FOUND');
-    return getProduct(productId);
+    return getProduct(productId, scope);
   } catch (error) {
     if (error.code === '23505') {
       throw AppError.conflict('A product with this SKU already exists', 'SKU_IN_USE');

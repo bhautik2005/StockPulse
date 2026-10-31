@@ -9,7 +9,11 @@ import { AppError } from '../../errors/AppError.js';
 import { uuidString } from '../../lib/commonSchemas.js';
 import { asyncHandler } from '../../middleware/asyncHandler.js';
 import { authenticate } from '../../middleware/authenticate.js';
-import { attachWarehouseScope, requireRole } from '../../middleware/authorize.js';
+import {
+  attachWarehouseScope,
+  requireRole,
+  requireWarehouseQueryAccess,
+} from '../../middleware/authorize.js';
 import { validate } from '../../middleware/validate.js';
 import { idParam } from '../../lib/commonSchemas.js';
 import * as service from './orders.service.js';
@@ -39,7 +43,7 @@ const limits = {
  */
 ordersRouter.post(
   '/',
-  requireRole(ROLES.CLIENT, ROLES.STAFF, ROLES.ADMIN),
+  requireRole(ROLES.CLIENT, ROLES.STAFF, ROLES.ADMIN, ROLES.MANAGER),
   validate({ body: createOrderSchema }),
   asyncHandler(async (req, res) => {
     const headerKey = req.get('idempotency-key');
@@ -57,6 +61,7 @@ ordersRouter.post(
       currency: req.body.currency ?? 'USD',
       idempotencyKey: headerKey ?? req.body.idempotency_key,
       limits,
+      scope: req.warehouseScope,
     });
 
     res.status(replayed ? 200 : 201).json({
@@ -70,6 +75,7 @@ ordersRouter.post(
 ordersRouter.get(
   '/',
   validate({ query: listOrdersQuery }),
+  requireWarehouseQueryAccess((req) => req.validatedQuery.warehouse_id),
   asyncHandler(async (req, res) => {
     const filters = req.validatedQuery;
     const { rows, total } = await service.listOrders({

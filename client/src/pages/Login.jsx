@@ -8,6 +8,7 @@ import { describeError, isNetworkError } from '../lib/errors.js';
 import { Alert } from '../components/ui/Feedback.jsx';
 import { Button } from '../components/ui/Button.jsx';
 import { Field, Input } from '../components/ui/Input.jsx';
+import { PasswordInput } from '../components/ui/PasswordInput.jsx';
 
 /**
  * Demo credentials, for reviewers rather than for production.
@@ -99,9 +100,8 @@ export function Login() {
 
         <Field label="Password" required>
           {(props) => (
-            <Input
+            <PasswordInput
               {...props}
-              type="password"
               name="password"
               autoComplete="current-password"
               placeholder="••••••••••••"

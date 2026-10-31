@@ -17,6 +17,7 @@
  * Keeping the order identical everywhere removes an entire class of silent
  * "decremented the wrong product" bugs.
  */
+import { warehouseScopeClause } from '../../lib/warehouseScope.js';
 
 /** @typedef {{ product_id: number, warehouse_id: number, qty: number }} Line */
 
@@ -64,17 +65,21 @@ export function findActiveWarehouses(db, warehouseIds) {
  * most stock, then lowest warehouse id (a stable tie-break keeps allocation
  * deterministic and therefore testable).
  */
-export function findStockCandidates(db, productIds) {
+export function findStockCandidates(db, productIds, scope) {
+  const params = [productIds];
+  const scopeClause = scope === undefined ? 'TRUE' : warehouseScopeClause(scope, 'w.id', params);
+
   return db.query(
     `SELECT i.product_id, i.warehouse_id, i.quantity
        FROM inventory i
        JOIN warehouses w ON w.id = i.warehouse_id
       WHERE i.product_id = ANY($1::int[])
+        AND ${scopeClause}
         AND w.is_active
         AND w.deleted_at IS NULL
         AND (SELECT is_active FROM products WHERE id = i.product_id) = true
       ORDER BY i.product_id, i.quantity DESC, i.warehouse_id ASC`,
-    [productIds],
+    params,
   );
 }
 
@@ -364,7 +369,8 @@ function orderVisibilityClause({ scope, clientId }, params) {
   if (clientId !== undefined && clientId !== null) {
     params.push(clientId);
     clauses.push(`o.client_id = $${params.length}`);
-  } else if (scope && !scope.all) {
+  }
+  if (scope && !scope.all) {
     if (!scope.ids || scope.ids.length === 0) {
       return 'FALSE';
     }
@@ -382,6 +388,8 @@ function orderVisibilityClause({ scope, clientId }, params) {
 export async function listOrders(db, { scope, clientId, status, warehouseId, from, to, limit, offset }) {
   const params = [];
   const clauses = [orderVisibilityClause({ scope, clientId }, params)];
+  const scopeParamIndex =
+    scope && !scope.all ? params.findIndex((value) => value === scope.ids) + 1 : null;
 
   if (status) {
     params.push(status);
@@ -404,12 +412,21 @@ export async function listOrders(db, { scope, clientId, status, warehouseId, fro
   }
 
   const where = clauses.join(' AND ');
+  const scopedLineFilter = scopeParamIndex
+    ? `oi.warehouse_id = ANY($${scopeParamIndex}::int[])`
+    : null;
+  const totalAmount = scopedLineFilter
+    ? `COALESCE(sum(oi.line_total) FILTER (WHERE ${scopedLineFilter}), 0)::numeric(14,2)`
+    : 'o.total_amount';
+  const lineCount = scopedLineFilter
+    ? `count(oi.id) FILTER (WHERE ${scopedLineFilter})::int`
+    : 'count(oi.id)::int';
 
   params.push(limit, offset);
   const { rows } = await db.query(
-    `SELECT o.id, o.order_number, o.status, o.total_amount, o.currency,
+    `SELECT o.id, o.order_number, o.status, ${totalAmount} AS total_amount, o.currency,
             o.created_at, u.name AS client_name,
-            count(oi.id)::int AS line_count
+            ${lineCount} AS line_count
        FROM orders o
        JOIN users u ON u.id = o.client_id
        LEFT JOIN order_items oi ON oi.order_id = o.id

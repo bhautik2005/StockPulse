@@ -11,7 +11,13 @@ import { after, before, describe, it } from 'node:test';
 
 import { resetDatabase, scalar, startServer } from './helpers/harness.js';
 import { createApiClient, isError } from './helpers/api.js';
-import { createClient, createUser, createWorld, receiveStock } from './helpers/fixtures.js';
+import {
+  createClient,
+  createProduct,
+  createUser,
+  createWorld,
+  receiveStock,
+} from './helpers/fixtures.js';
 
 describe('P0 :: RBAC and warehouse scoping', () => {
   let world;
@@ -59,6 +65,131 @@ describe('P0 :: RBAC and warehouse scoping', () => {
     assert.ok(ids.includes(world.warehouses.nairobi.id));
     assert.ok(ids.includes(world.warehouses.lagos.id));
     assert.ok(ids.includes(world.warehouses.dubai.id));
+  });
+
+  it('lists only assigned warehouses and scoped stock for a Manager', async () => {
+    const warehouses = await world.managers.nairobi.api.get('/api/warehouses', {
+      query: { limit: 100 },
+    });
+    assert.deepEqual(
+      warehouses.body.data.map((row) => row.id),
+      [world.warehouses.nairobi.id],
+    );
+
+    const products = await world.managers.nairobi.api.get('/api/products', {
+      query: { limit: 100 },
+    });
+    const keyboard = products.body.data.find((row) => row.id === world.products.keyboard.id);
+    const assignedStock = await scalar(
+      'SELECT COALESCE(sum(quantity), 0)::int FROM inventory WHERE product_id = $1 AND warehouse_id = $2',
+      [world.products.keyboard.id, world.warehouses.nairobi.id],
+    );
+    assert.equal(keyboard.total_quantity, assignedStock);
+  });
+
+  it('filters archived products, categories, searches, and paginates with a filtered total', async () => {
+    const active = await createProduct(world.admin.api, {
+      sku: `ARCHIVE-A-${Date.now()}`,
+      name: 'Archive Filter Alpha',
+      category: 'Archive Filter Test',
+    });
+    const archived = await createProduct(world.admin.api, {
+      sku: `ARCHIVE-B-${Date.now()}`,
+      name: 'Archive Filter Beta',
+      category: 'Archive Filter Test',
+    });
+
+    const archiveResponse = await world.admin.api.delete(`/api/products/${archived.id}`);
+    assert.equal(archiveResponse.status, 200);
+
+    const activeOnly = await world.admin.api.get('/api/products', {
+      query: {
+        include_inactive: 'false',
+        category: 'Archive Filter Test',
+        search: 'Archive Filter',
+        limit: 1,
+      },
+    });
+    assert.equal(activeOnly.status, 200);
+    assert.equal(activeOnly.body.meta.total, 1);
+    assert.deepEqual(activeOnly.body.data.map((product) => product.id), [active.id]);
+
+    const archivedIncludedFirstPage = await world.admin.api.get('/api/products', {
+      query: {
+        include_inactive: 'true',
+        category: 'Archive Filter Test',
+        search: 'Archive Filter',
+        limit: 1,
+        page: 1,
+      },
+    });
+    assert.equal(archivedIncludedFirstPage.status, 200);
+    assert.equal(
+      archivedIncludedFirstPage.body.meta.total,
+      2,
+      JSON.stringify(archivedIncludedFirstPage.body),
+    );
+    /*
+     * The category rail is the catalogue's full taxonomy, NOT the filtered
+     * subset. Returning only the categories present in the current result made
+     * every other button disappear as soon as a search or category filter was
+     * applied -- including the button needed to undo it. Compare against an
+     * unfiltered request in the same archive view rather than hard-coding the
+     * world's categories.
+     */
+    const taxonomyBaseline = await world.admin.api.get('/api/products', {
+      query: { include_inactive: 'true', limit: 1 },
+    });
+    assert.deepEqual(
+      archivedIncludedFirstPage.body.meta.categories,
+      taxonomyBaseline.body.meta.categories,
+      'meta.categories must be independent of the active search and category filters',
+    );
+    assert.ok(archivedIncludedFirstPage.body.meta.categories.includes('Archive Filter Test'));
+
+    const archivedIncludedSecondPage = await world.admin.api.get('/api/products', {
+      query: {
+        include_inactive: 'true',
+        category: 'Archive Filter Test',
+        search: 'Archive Filter',
+        limit: 1,
+        page: 2,
+      },
+    });
+    assert.equal(archivedIncludedSecondPage.body.meta.total, 2);
+    assert.equal(archivedIncludedSecondPage.body.data.length, 1);
+    assert.equal(archivedIncludedSecondPage.body.data[0].id, archived.id);
+    assert.equal(archivedIncludedSecondPage.body.data[0].is_active, false);
+  });
+
+  it('creates Manager orders only from assigned warehouses and rejects URL/API overrides', async () => {
+    const autoAllocated = await world.managers.nairobi.api.post('/api/orders', {
+      items: [{ product_id: world.products.keyboard.id, quantity: 1 }],
+    });
+    assert.equal(autoAllocated.status, 201);
+    assert.equal(autoAllocated.body.data.items[0].warehouse.id, world.warehouses.nairobi.id);
+
+    const unauthorizedOrder = await world.managers.nairobi.api.post('/api/orders', {
+      items: [
+        {
+          product_id: world.products.keyboard.id,
+          quantity: 1,
+          warehouse_id: world.warehouses.lagos.id,
+        },
+      ],
+    });
+    assert.equal(unauthorizedOrder.status, 403);
+    assert.equal(unauthorizedOrder.body.error.code, 'WAREHOUSE_FORBIDDEN');
+
+    const unauthorizedOrderFilter = await world.managers.nairobi.api.get('/api/orders', {
+      query: { warehouse_id: world.warehouses.lagos.id },
+    });
+    assert.equal(unauthorizedOrderFilter.status, 403);
+
+    const unauthorizedInventoryFilter = await world.managers.nairobi.api.get('/api/inventory', {
+      query: { warehouse_id: world.warehouses.lagos.id },
+    });
+    assert.equal(unauthorizedInventoryFilter.status, 403);
   });
 
   it('refuses a Staff member writing stock into a warehouse they are not assigned to', async () => {
@@ -134,9 +265,60 @@ describe('P0 :: RBAC and warehouse scoping', () => {
       "another warehouse's order must not be listed",
     );
 
+    const filteredByClient = await world.managers.nairobi.api.get('/api/orders', {
+      query: { client_id: world.clients.acme.id, limit: 100 },
+    });
+    assert.ok(
+      filteredByClient.body.data.every((row) => row.id !== lagosOrder.body.data.id),
+      'combining client_id with a warehouse scope must not bypass the scope',
+    );
+
     // And a direct fetch must not leak it either.
     const direct = await world.managers.nairobi.api.get(`/api/orders/${lagosOrder.body.data.id}`);
     assert.equal(direct.status, 404);
+
+    const stockBeforeCancel = await scalar(
+      'SELECT quantity FROM inventory WHERE warehouse_id = $1 AND product_id = $2',
+      [world.warehouses.lagos.id, world.products.keyboard.id],
+    );
+    const cancel = await world.managers.nairobi.api.post(
+      `/api/orders/${lagosOrder.body.data.id}/cancel`,
+      { reason: 'Out of scope' },
+    );
+    assert.equal(cancel.status, 404);
+    assert.equal(
+      await scalar('SELECT quantity FROM inventory WHERE warehouse_id = $1 AND product_id = $2', [
+        world.warehouses.lagos.id,
+        world.products.keyboard.id,
+      ]),
+      stockBeforeCancel,
+      'a Manager cannot restock another warehouse by cancelling its order',
+    );
+
+    const mixedOrder = await world.clients.acme.api.post('/api/orders', {
+      items: [
+        {
+          product_id: world.products.keyboard.id,
+          quantity: 1,
+          warehouse_id: world.warehouses.nairobi.id,
+        },
+        {
+          product_id: world.products.keyboard.id,
+          quantity: 1,
+          warehouse_id: world.warehouses.lagos.id,
+        },
+      ],
+    });
+    assert.equal(mixedOrder.status, 201);
+    const mixedDetails = await world.managers.nairobi.api.get(
+      `/api/orders/${mixedOrder.body.data.id}`,
+    );
+    assert.equal(mixedDetails.status, 200);
+    assert.deepEqual(
+      mixedDetails.body.data.items.map((item) => item.warehouse.id),
+      [world.warehouses.nairobi.id],
+      'order details must not include lines from unassigned warehouses',
+    );
   });
 
   it('scopes analytics to the caller’s warehouses', async () => {

@@ -5,12 +5,12 @@ import { Router } from 'express';
 import multer from 'multer';
 
 import { ROLES } from '../../config/env.js';
-import { query } from '../../db/pool.js';
 import { AppError } from '../../errors/AppError.js';
 import { idParam } from '../../lib/commonSchemas.js';
+import { assertWarehouseInScope } from '../../lib/warehouseScope.js';
 import { asyncHandler } from '../../middleware/asyncHandler.js';
 import { authenticate } from '../../middleware/authenticate.js';
-import { requireRole } from '../../middleware/authorize.js';
+import { attachWarehouseScope, requireRole } from '../../middleware/authorize.js';
 import { validate } from '../../middleware/validate.js';
 import {
   catalogQuery,
@@ -27,20 +27,21 @@ export const catalogRouter = Router();
  * Client catalogue. Requires a session (B2B pricing is not public) but is
  * available to every role, including Clients.
  */
-catalogRouter.use(authenticate);
+catalogRouter.use(authenticate, attachWarehouseScope);
 
 catalogRouter.get(
   '/',
   validate({ query: catalogQuery }),
   asyncHandler(async (req, res) => {
     const { page, limit, search, category } = req.validatedQuery;
-    const { rows, total } = await service.getCatalog({
+    const { rows, total, categories } = await service.getCatalog({
       search,
       category,
       limit,
       offset: (page - 1) * limit,
+      scope: req.user.role === ROLES.CLIENT ? undefined : req.warehouseScope,
     });
-    res.json({ data: rows, meta: { page, limit, total } });
+    res.json({ data: rows, meta: { page, limit, total, categories } });
   }),
 );
 
@@ -48,7 +49,10 @@ catalogRouter.get(
   '/:id',
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
-    const product = await service.getProduct(req.params.id);
+    const product = await service.getProduct(
+      req.params.id,
+      req.user.role === ROLES.CLIENT ? undefined : req.warehouseScope,
+    );
     res.json({
       data: {
         id: product.id,
@@ -67,21 +71,22 @@ catalogRouter.get(
 // /api/products -- internal catalogue management
 // ---------------------------------------------------------------------------
 
-productsRouter.use(authenticate, requireRole(ROLES.ADMIN, ROLES.MANAGER));
+productsRouter.use(authenticate, requireRole(ROLES.ADMIN, ROLES.MANAGER), attachWarehouseScope);
 
 productsRouter.get(
   '/',
   validate({ query: listProductsQuery }),
   asyncHandler(async (req, res) => {
     const { page, limit, search, category, include_inactive: includeInactive } = req.validatedQuery;
-    const { rows, total } = await service.listProducts({
+    const { rows, total, categories } = await service.listProducts({
       search,
       category,
       includeInactive,
       limit,
       offset: (page - 1) * limit,
+      scope: req.warehouseScope,
     });
-    res.json({ data: rows, meta: { page, limit, total } });
+    res.json({ data: rows, meta: { page, limit, total, categories } });
   }),
 );
 
@@ -153,28 +158,7 @@ productsRouter.post(
       );
     }
 
-    // Role-based warehouse authorization check
-    if (req.user.role === ROLES.MANAGER) {
-      const { rows: accessRows } = await query(
-        `SELECT 1 FROM warehouses w
-          WHERE w.id = $1 AND w.deleted_at IS NULL
-            AND (
-              w.manager_id = $2
-              OR EXISTS (
-                SELECT 1 FROM user_warehouses uw
-                 WHERE uw.warehouse_id = w.id AND uw.user_id = $2
-              )
-            )`,
-        [warehouseId, req.user.id],
-      );
-
-      if (accessRows.length === 0) {
-        throw AppError.forbidden(
-          'You do not have permission to import products into this warehouse.',
-          'WAREHOUSE_FORBIDDEN',
-        );
-      }
-    }
+    assertWarehouseInScope(req.warehouseScope, warehouseId);
 
     const initialStock = Math.max(0, parseInt(req.body.initial_stock ?? '0', 10) || 0);
 
@@ -194,7 +178,7 @@ productsRouter.get(
   '/:id',
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
-    res.json({ data: await service.getProduct(req.params.id) });
+    res.json({ data: await service.getProduct(req.params.id, req.warehouseScope) });
   }),
 );
 
@@ -202,7 +186,11 @@ productsRouter.patch(
   '/:id',
   validate({ params: idParam, body: updateProductSchema }),
   asyncHandler(async (req, res) => {
-    const product = await service.updateProduct({ productId: req.params.id, patch: req.body });
+    const product = await service.updateProduct({
+      productId: req.params.id,
+      patch: req.body,
+      scope: req.warehouseScope,
+    });
     res.json({ data: product });
   }),
 );

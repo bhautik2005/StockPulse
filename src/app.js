@@ -12,10 +12,12 @@ import { env } from './config/env.js';
 import { checkDatabase, poolStats } from './db/pool.js';
 import { logger } from './lib/logger.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
+import { adminRouter } from './modules/admin/admin.routes.js';
 import { analyticsRouter } from './modules/analytics/analytics.routes.js';
 import { authRouter, usersRouter } from './modules/auth/auth.routes.js';
 import { inventoryRouter } from './modules/inventory/inventory.routes.js';
 import { ordersRouter } from './modules/orders/orders.routes.js';
+import { bulkImportRouter } from './modules/orders/bulkImport.routes.js';
 import { catalogRouter, productsRouter } from './modules/products/products.routes.js';
 import { warehousesRouter } from './modules/warehouses/warehouses.routes.js';
 
@@ -23,9 +25,14 @@ export function createApp() {
   const app = express();
 
   app.disable('x-powered-by');
-  // Behind a proxy the client IP arrives in X-Forwarded-For; rate limiting and
-  // logging depend on trusting exactly one hop.
-  if (env.isProduction) app.set('trust proxy', 1);
+  /*
+   * Behind a proxy the client IP arrives in X-Forwarded-For, and `req.ip` keys
+   * the login rate limiter -- so this must match the real topology exactly.
+   * Trusting too little lumps every user into one bucket (one attacker locks
+   * everyone out); trusting too much lets a client forge its own IP and never be
+   * limited. See TRUST_PROXY in src/config/env.js.
+   */
+  if (env.trustProxy) app.set('trust proxy', env.trustProxy);
 
   // Get allowed origins from environment variables (comma-separated list)
   const baseAllowedOrigins = env.CORS_ORIGIN
@@ -137,6 +144,7 @@ export function createApp() {
     res.json({
       data: {
         auth: ['POST /api/auth/register', 'POST /api/auth/login', 'POST /api/auth/logout', 'GET /api/auth/me'],
+        admin: ['GET /api/admin/overview', 'GET /api/admin/users', 'GET /api/admin/users/:id'],
         users: ['GET /api/users', 'POST /api/users', 'PATCH /api/users/:id', 'POST /api/users/:id/warehouse-access'],
         warehouses: [
           'GET /api/warehouses',
@@ -173,12 +181,14 @@ export function createApp() {
   });
 
   app.use('/api/auth', authRouter);
+  app.use('/api/admin', adminRouter);
   app.use('/api/users', usersRouter);
   app.use('/api/warehouses', warehousesRouter);
   app.use('/api/products', productsRouter);
   app.use('/api/catalog', catalogRouter);
   app.use('/api/inventory', inventoryRouter);
   app.use('/api/orders', ordersRouter);
+  app.use('/api/orders', bulkImportRouter);
   app.use('/api/analytics', analyticsRouter);
 
   app.use(notFoundHandler);

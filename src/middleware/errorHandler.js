@@ -44,6 +44,17 @@ const PG_ERROR_MAP = {
   '23502': (e) =>
     AppError.badRequest('A required field was missing', 'MISSING_FIELD', { column: e.column }),
   '22P02': () => AppError.badRequest('Malformed value: expected an integer, uuid or numeric'),
+  // 22021 is "invalid byte sequence for encoding UTF8" -- in practice a null byte
+  // (\u0000), which PostgreSQL cannot store in any text type. Without this
+  // mapping a single JSON string containing U+0000 turns into a 500, so any
+  // caller can manufacture an internal error and bury the real ones in the logs.
+  // src/lib/commonSchemas.js `safeText` rejects it earlier; this is the backstop
+  // for a value that reaches the database by some other route.
+  '22021': () =>
+    AppError.badRequest(
+      'Text contains a character that cannot be stored (a null byte)',
+      'INVALID_TEXT_ENCODING',
+    ),
   '40001': () => AppError.conflict('Concurrent update detected, please retry', 'SERIALIZATION_FAILURE'),
   '40P01': () => AppError.conflict('Concurrent update detected, please retry', 'DEADLOCK_DETECTED'),
   '55P03': () => AppError.conflict('Could not lock the requested record in time', 'LOCK_TIMEOUT'),
