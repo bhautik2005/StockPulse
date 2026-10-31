@@ -182,3 +182,75 @@ export async function revokeSessions(userId) {
   const { rows } = await repo.bumpTokenVersion(pool, userId);
   return { token_version: rows[0].token_version };
 }
+
+/** The roles an administrator is allowed to remove permanently. */
+const DELETABLE_ROLES = [ROLES.CLIENT, ROLES.MANAGER, ROLES.STAFF];
+
+/**
+ * Permanently deletes a deactivated Client, Manager or Staff account.
+ *
+ * "Permanently" means the account is gone for good rather than a reversible
+ * flag: it vanishes from every read path, its tokens stop working, and its
+ * email address is released for reuse. It is implemented as a soft delete
+ * because a user row is referenced by orders, the stock ledger and the order
+ * status history -- two of those with ON DELETE RESTRICT -- so removing the row
+ * would either fail or require destroying financial history, which an ERP must
+ * never do as a side effect of deleting an account.
+ *
+ * The guards run in order and every one of them is re-checked here on the
+ * server; hiding the button in the UI is a convenience, not the control.
+ */
+export async function deleteUser({ actor, userId }) {
+  // Checked before anything else: an administrator must not be able to remove
+  // their own account, which would revoke the session making the request.
+  if (actor.id === userId) {
+    throw AppError.forbidden('You cannot permanently delete your own account', 'CANNOT_DELETE_SELF');
+  }
+
+  return withTransaction(async (db) => {
+    const { rows } = await repo.findUserById(db, userId);
+    const existing = rows[0];
+    if (!existing) throw AppError.notFound('User not found', 'USER_NOT_FOUND');
+
+    // Administrators are protected even when disabled; removing the only way
+    // back into the system is not something a single click should be able to do.
+    if (existing.role === ROLES.ADMIN) {
+      throw AppError.conflict(
+        'Administrator accounts are protected and cannot be permanently deleted.',
+        'PROTECTED_ACCOUNT',
+      );
+    }
+
+    // A backstop rather than a live rule: it now only rejects a role that does
+    // not exist yet, and exists so a future addition is non-deletable by default.
+    if (!DELETABLE_ROLES.includes(existing.role)) {
+      throw AppError.conflict(
+        `Only staff, client and manager accounts can be permanently deleted. This account is a ${existing.role}.`,
+        'ROLE_NOT_DELETABLE',
+      );
+    }
+
+    // Deactivation is the deliberate first step: it is reversible, deletion is not.
+    if (existing.is_active) {
+      throw AppError.conflict(
+        'Deactivate this account before deleting it permanently.',
+        'USER_ACTIVE',
+      );
+    }
+
+    const { rows: history } = await repo.countUserHistory(db, userId);
+    const { rows: released } = await repo.releaseManagedWarehouses(db, userId);
+    await repo.deleteWarehouseGrants(db, userId);
+
+    const { rows: deleted } = await repo.softDeleteUser(db, userId);
+    if (deleted.length === 0) throw AppError.notFound('User not found', 'USER_NOT_FOUND');
+
+    return {
+      ...publicUser({ ...deleted[0], is_active: false }),
+      // Surfaced so the caller can tell the admin what had to be unwound, and
+      // what was intentionally kept.
+      warehouses_released: released.length,
+      history: history[0],
+    };
+  });
+}

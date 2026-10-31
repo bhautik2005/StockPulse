@@ -145,7 +145,13 @@ export function createApp() {
       data: {
         auth: ['POST /api/auth/register', 'POST /api/auth/login', 'POST /api/auth/logout', 'GET /api/auth/me'],
         admin: ['GET /api/admin/overview', 'GET /api/admin/users', 'GET /api/admin/users/:id'],
-        users: ['GET /api/users', 'POST /api/users', 'PATCH /api/users/:id', 'POST /api/users/:id/warehouse-access'],
+        users: [
+          'GET /api/users',
+          'POST /api/users',
+          'PATCH /api/users/:id',
+          'DELETE /api/users/:id',
+          'POST /api/users/:id/warehouse-access',
+        ],
         warehouses: [
           'GET /api/warehouses',
           'POST /api/warehouses',

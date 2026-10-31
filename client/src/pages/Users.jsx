@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { KeyRound, Plus, ShieldCheck, UserCog, UserRound, Users as UsersIcon } from 'lucide-react';
+import { KeyRound, Plus, ShieldCheck, Trash2, UserCog, UserRound, Users as UsersIcon } from 'lucide-react';
 
 import { useAuth } from '../context/AuthContext.jsx';
 import { useApiResource } from '../hooks/useApiResource.js';
@@ -26,6 +26,19 @@ const ROLE_TONE = {
 
 const EMPTY_FORM = { name: '', email: '', password: '', role: ROLES.STAFF };
 
+/**
+ * Roles an administrator may remove permanently.
+ *
+ * Mirrors the server-side rule in auth.service.js. It drives button visibility
+ * only -- the API re-checks every condition, so a crafted request cannot delete
+ * an administrator, an active account or the caller's own account.
+ *
+ * Staff were originally left out of this list by mistake: they could be
+ * deactivated but never cleaned up, so a deactivated Staff row was stuck in the
+ * table forever. They follow exactly the same rules as Client and Manager.
+ */
+const DELETABLE_ROLES = [ROLES.CLIENT, ROLES.MANAGER, ROLES.STAFF];
+
 export function Users() {
   const { user: currentUser } = useAuth();
   const toast = useToast();
@@ -46,6 +59,13 @@ export function Users() {
   const [accessFor, setAccessFor] = useState(null);
   const [selected, setSelected] = useState([]);
   const [accessError, setAccessError] = useState(null);
+
+  // Permanent deletion. `deleteFor` being non-null is what opens the dialog;
+  // the request only closes it on success, so a failure keeps the target and
+  // the reason on screen.
+  const [deleteFor, setDeleteFor] = useState(null);
+  const [deleteError, setDeleteError] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
   const rows = users.data ?? [];
   const meta = users.meta ?? { page, limit: 20, total: 0 };
@@ -149,6 +169,48 @@ export function Users() {
       users.reload();
     } catch (caught) {
       toast.error('Could not change the account', describeError(caught));
+    }
+  }
+
+  /**
+   * True when the row is eligible for permanent deletion: deactivated, and a
+   * Client, Manager or Staff account. Administrators are never deletable, and
+   * an administrator cannot remove their own account.
+   */
+  function canDelete(row) {
+    return (
+      !row.is_active &&
+      DELETABLE_ROLES.includes(row.role) &&
+      row.id !== currentUser?.id
+    );
+  }
+
+  async function handleDelete() {
+    if (!deleteFor || deleting) return;
+    const target = deleteFor;
+
+    setDeleting(true);
+    setDeleteError(null);
+
+    try {
+      const result = await usersApi.remove(target.id);
+      const released = result.data?.warehouses_released ?? 0;
+
+      toast.success(
+        'User permanently deleted',
+        released > 0
+          ? `${target.name} has been removed. ${released} warehouse${released === 1 ? '' : 's'} now need a manager.`
+          : `${target.name} has been removed and can no longer sign in.`,
+      );
+
+      // Only a confirmed deletion closes the dialog and refreshes the table.
+      setDeleteFor(null);
+      users.reload();
+    } catch (caught) {
+      // The account stays in the table; the dialog keeps its details visible.
+      setDeleteError(caught);
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -279,6 +341,24 @@ export function Users() {
                           >
                             {row.is_active ? 'Deactivate' : 'Reactivate'}
                           </Button>
+                          {/* Permanent deletion is offered only once the account
+                              is already disabled, and never for administrators. */}
+                          {canDelete(row) ? (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                              onClick={() => {
+                                setDeleteError(null);
+                                setDeleteFor(row);
+                              }}
+                              aria-label={`Permanently delete ${row.name}`}
+                              title={`Permanently delete ${row.name}`}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                              Delete
+                            </Button>
+                          ) : null}
                         </div>
                       </TD>
                     </TR>
@@ -522,6 +602,52 @@ export function Users() {
             })
           )}
         </form>
+      </Dialog>
+
+      {/* Permanent deletion -- requires an explicit second action. */}
+      <Dialog
+        open={Boolean(deleteFor)}
+        // Escape and the backdrop are ignored while the request is in flight:
+        // closing mid-request would hide whether the deletion actually happened.
+        onClose={() => {
+          if (!deleting) setDeleteFor(null);
+        }}
+        title="Permanently delete user"
+        description="This action cannot be undone."
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setDeleteFor(null)} disabled={deleting}>
+              Cancel
+            </Button>
+            <Button variant="destructive" loading={deleting} onClick={handleDelete}>
+              Permanently Delete
+            </Button>
+          </>
+        }
+      >
+        {deleteError ? (
+          <div className="mb-4">
+            <Alert tone="destructive" title="Could not delete the user">
+              {describeError(deleteError)}
+            </Alert>
+          </div>
+        ) : null}
+
+        <div className="flex flex-col gap-4">
+          <dl className="grid grid-cols-[4.5rem,1fr] gap-x-3 gap-y-2 rounded-md border border-border bg-muted/30 p-3 text-xs">
+            <dt className="text-muted-foreground">Name</dt>
+            <dd className="font-medium">{deleteFor?.name}</dd>
+            <dt className="text-muted-foreground">Email</dt>
+            <dd className="truncate font-mono text-2xs">{deleteFor?.email}</dd>
+            <dt className="text-muted-foreground">Role</dt>
+            <dd>{deleteFor?.role}</dd>
+          </dl>
+
+          <Alert tone="destructive" title="This cannot be undone">
+            {deleteFor?.name} will be permanently removed and will no longer be able to sign in.
+            Their historical orders and stock movements are kept so the ERP records stay intact.
+          </Alert>
+        </div>
       </Dialog>
     </div>
   );

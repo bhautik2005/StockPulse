@@ -117,3 +117,69 @@ export function listWarehouseGrants(db, userId) {
     [userId],
   );
 }
+
+/**
+ * Permanently removes an account from the application.
+ *
+ * This sets `deleted_at` rather than issuing a DELETE, which is the mechanism
+ * the schema was designed around ("Soft delete: users are referenced by orders
+ * and ledger rows forever"). A real DELETE cannot work here: `orders.client_id`
+ * and `warehouses.manager_id` are both ON DELETE RESTRICT, so the statement
+ * would either fail outright or force the caller to destroy financial history.
+ *
+ * Because every read path in the codebase filters on `deleted_at IS NULL` --
+ * including `authenticate` and `findUserByEmail` -- the account disappears from
+ * the UI and stops being able to sign in immediately. The uniqueness index on
+ * email is partial (`WHERE deleted_at IS NULL`), so the address is released for
+ * reuse rather than being burned for good.
+ */
+export function softDeleteUser(db, id) {
+  return db.query(
+    `UPDATE users
+        SET deleted_at = now(),
+            is_active = false,
+            token_version = token_version + 1
+      WHERE id = $1 AND deleted_at IS NULL
+      RETURNING id, name, email, role`,
+    [id],
+  );
+}
+
+/**
+ * Clears any warehouse managed by this user.
+ *
+ * `warehouses.manager_id` is ON DELETE RESTRICT and is deliberately not
+ * nullable-by-accident: leaving it pointing at a removed account would show a
+ * manager who cannot sign in, and would silently keep stock unaccountable.
+ * Releasing it keeps the warehouse intact and ready for a new manager.
+ */
+export function releaseManagedWarehouses(db, userId) {
+  return db.query(
+    `UPDATE warehouses
+        SET manager_id = NULL
+      WHERE manager_id = $1
+      RETURNING id, code`,
+    [userId],
+  );
+}
+
+/** Drops the explicit warehouse grants belonging to a user. */
+export function deleteWarehouseGrants(db, userId) {
+  return db.query('DELETE FROM user_warehouses WHERE user_id = $1', [userId]);
+}
+
+/**
+ * Counts the history that references this user.
+ *
+ * Reported back to the admin so the outcome is explicit: the account is gone,
+ * but these records were deliberately kept. Silently discarding them, or
+ * claiming nothing remained, would misrepresent what "delete" did.
+ */
+export function countUserHistory(db, userId) {
+  return db.query(
+    `SELECT
+       (SELECT count(*)::int FROM orders WHERE client_id = $1) AS orders,
+       (SELECT count(*)::int FROM inventory_transactions WHERE created_by = $1) AS ledger_entries`,
+    [userId],
+  );
+}

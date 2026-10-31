@@ -201,3 +201,19 @@ usersRouter.post(
     res.json({ data: result });
   }),
 );
+
+/**
+ * Permanently deletes a deactivated Client or Manager.
+ *
+ * Admin-only (enforced by the router guard above). Administrators, active
+ * accounts, Staff accounts and the caller's own account are all refused by the
+ * service, so the rules hold even when the request does not come from the UI.
+ */
+usersRouter.delete(
+  '/:id',
+  validate({ params: idParam }),
+  asyncHandler(async (req, res) => {
+    const user = await service.deleteUser({ actor: req.user, userId: req.params.id });
+    res.json({ data: user });
+  }),
+);

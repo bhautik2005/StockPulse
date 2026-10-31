@@ -197,7 +197,18 @@ describe('Phase 3 :: Products -- category rail', () => {
     await waitFor(() => expect(api.list).toHaveBeenLastCalledWith(expect.objectContaining({ search: 'zzz-no-match' })));
     expect(railTabs()).toHaveLength(CATEGORIES.length + 1);
 
-    await user.clear(screen.getByLabelText('Search products'));
+    // Cleared through onChange rather than userEvent.clear(): that helper
+    // simulates select-all followed by Delete, and the 350ms debounced URL sync
+    // can re-render this controlled input between the two key events, which
+    // silently drops the clear. Firing the change event is deterministic and
+    // exercises the same handler a real keystroke does.
+    // Cleared through the page's own Clear affordance. userEvent.clear() types
+    // select-all + Delete, and the 350ms debounced URL sync can re-render this
+    // controlled input between those two events, which intermittently drops the
+    // clear; the button is a single deterministic interaction and is the path a
+    // user actually takes to get back from a no-match search.
+    await user.click(screen.getByRole('button', { name: /^Clear$/i }));
+    await waitFor(() => expect(screen.getByLabelText('Search products')).toHaveValue(''));
     await screen.findByText('Elbow joint');
 
     // Search + category + archive all in play at once.

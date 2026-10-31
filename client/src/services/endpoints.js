@@ -20,6 +20,8 @@ export const usersApi = {
   list: (params) => api.get('/api/users', { query: params }),
   create: (user) => api.post('/api/users', user),
   update: (id, changes) => api.patch(`/api/users/${id}`, changes),
+  /** Permanently removes a deactivated Client or Manager. Admin-only. */
+  remove: (id) => api.delete(`/api/users/${id}`),
   setWarehouseAccess: (id, { grant = [], revoke = [] }) =>
     api.post(`/api/users/${id}/warehouse-access`, { grant, revoke }),
 };
