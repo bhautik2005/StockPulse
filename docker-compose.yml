@@ -32,7 +32,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: 5000
-      DATABASE_URL: postgresql database Url
+      DATABASE_URL: ${DATABASE_URL1} 
       JWT_SECRET: ${JWT_SECRET:-local-docker-development-secret-change-before-deploy}
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5173}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
