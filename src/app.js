@@ -39,7 +39,18 @@ export function createApp() {
     ? env.CORS_ORIGIN.split(',').map((origin) => origin.trim())
     : ['http://localhost:5173'];
 
-  app.use(helmet());
+  /*
+   * Helmet's defaults already cover most headers, but Referrer-Policy is stated
+   * explicitly because this application has a URL that carries a secret: the
+   * password-reset link puts its token in the query string, and any outbound
+   * request from that page (an image, a font, a redirect) would otherwise send
+   * the full URL in the Referer header to a third party.
+   */
+  app.use(
+    helmet({
+      referrerPolicy: { policy: 'no-referrer' },
+    }),
+  );
   app.use(
     cors({
       //   // `credentials: true` requires an explicit origin list, never '*'. A
@@ -143,7 +154,15 @@ export function createApp() {
   app.get('/api', (_req, res) => {
     res.json({
       data: {
-        auth: ['POST /api/auth/register', 'POST /api/auth/login', 'POST /api/auth/logout', 'GET /api/auth/me'],
+        auth: [
+          'POST /api/auth/register',
+          'POST /api/auth/login',
+          'POST /api/auth/logout',
+          'GET /api/auth/me',
+          'POST /api/auth/forgot-password',
+          'POST /api/auth/validate-reset-token',
+          'POST /api/auth/reset-password',
+        ],
         admin: ['GET /api/admin/overview', 'GET /api/admin/users', 'GET /api/admin/users/:id'],
         users: [
           'GET /api/users',

@@ -4,6 +4,12 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark light" />
+    <!--
+      Belt and braces with the server's Referrer-Policy. The reset page carries
+      its token in the query string; this stops the browser sending that URL in
+      the Referer header for any resource the page loads.
+    -->
+    <meta name="referrer" content="no-referrer" />
     <title>StockPulse — Operations Console</title>
     <meta
       name="description"

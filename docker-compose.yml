@@ -36,6 +36,15 @@ services:
       JWT_SECRET: ${JWT_SECRET:-local-docker-development-secret-change-before-deploy}
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5173}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      # Password reset. FRONTEND_URL is the trusted base for the emailed link --
+      # it is never derived from an incoming Host header. SMTP credentials are
+      # injected here, never into the client build (the client has no access to
+      # the server environment at all; it is a static bundle behind nginx).
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
+      RESET_TOKEN_TTL_MINUTES: ${RESET_TOKEN_TTL_MINUTES:-30}
+      EMAIL_USER: ${EMAIL_USER:-}
+      EMAIL_PASS: ${EMAIL_PASS:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
     ports:
       - "5000:5000"
     healthcheck:

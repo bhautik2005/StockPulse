@@ -33,6 +33,44 @@ const schema = z.object({
   // stored password.
   BCRYPT_ROUNDS: z.coerce.number().int().min(4).max(15).default(12),
 
+  /*
+   * Password reset.
+   *
+   * FRONTEND_URL is the *only* source of the reset link's origin. It is
+   * deliberately not derived from the request's Host header: an attacker who
+   * can influence that header could otherwise have the reset email point at
+   * their own domain and harvest the token. Config is trusted; input is not.
+   */
+  FRONTEND_URL: z.string().url().default('http://localhost:5173'),
+  RESET_TOKEN_TTL_MINUTES: z.coerce.number().int().positive().max(1440).default(30),
+
+  /*
+   * Reset throttles, in two buckets.
+   *
+   * Configurable because the right numbers depend on deployment: an operator
+   * behind a shared NAT needs to raise the per-IP cap without loosening the
+   * per-account one, and a test has to lower them to observe a 429 at all.
+   */
+  RESET_RATE_IP_WINDOW_MS: z.coerce.number().int().positive().default(15 * 60 * 1000),
+  RESET_RATE_IP_MAX: z.coerce.number().int().positive().default(5),
+  RESET_RATE_ACCOUNT_WINDOW_MS: z.coerce.number().int().positive().default(60 * 60 * 1000),
+  RESET_RATE_ACCOUNT_MAX: z.coerce.number().int().positive().default(3),
+
+  /*
+   * Gmail SMTP. Credentials are optional at parse time so the API can boot
+   * (and its test suite can run) without a mailbox configured; `isEmailConfigured`
+   * below is what the mailer checks before claiming it can send.
+   *
+   * An App Password is required here -- Gmail rejects the account password for
+   * SMTP, which is a common and confusing first-run failure.
+   */
+  EMAIL_USER: z.string().optional(),
+  EMAIL_PASS: z.string().optional(),
+  EMAIL_FROM: z.string().optional(),
+  SMTP_HOST: z.string().default('smtp.gmail.com'),
+  SMTP_PORT: z.coerce.number().int().positive().default(465),
+  SMTP_SECURE: booleanish.default(true),
+
   CORS_ORIGIN: z.string().default('http://localhost:5173'),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error', 'silent']).default('info'),
 
@@ -115,6 +153,19 @@ export const env = Object.freeze({
    * anyone forge their own IP and sidestep the login limiter.
    */
   trustProxy: parsed.data.TRUST_PROXY ?? (parsed.data.NODE_ENV === 'production' ? 1 : false),
+
+  /** True only when a mailbox is actually configured, not merely referenced. */
+  isEmailConfigured: Boolean(parsed.data.EMAIL_USER && parsed.data.EMAIL_PASS),
+
+  /** Falls back to a harmless local sender so tests and logs stay readable. */
+  emailFrom:
+    parsed.data.EMAIL_FROM ??
+    (parsed.data.EMAIL_USER
+      ? `StockPulse <${parsed.data.EMAIL_USER}>`
+      : 'StockPulse <no-reply@stockpulse.local>'),
+
+  /** Token lifetime in milliseconds, derived once so every caller agrees. */
+  resetTokenTtlMs: parsed.data.RESET_TOKEN_TTL_MINUTES * 60_000,
 });
 
 /** Roles recognised by the system. Kept in one place to avoid string drift. */

@@ -183,3 +183,95 @@ export function countUserHistory(db, userId) {
     [userId],
   );
 }
+
+// ---------------------------------------------------------------------------
+// Password reset
+// ---------------------------------------------------------------------------
+
+/** Stores one reset token. Only the digest is ever written. */
+export function createPasswordResetToken(db, { userId, tokenHash, expiresAt }) {
+  return db.query(
+    `INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
+     VALUES ($1, $2, $3)
+     RETURNING id, expires_at`,
+    [userId, tokenHash, expiresAt],
+  );
+}
+
+/**
+ * Spends every unused token belonging to a user.
+ *
+ * Called before issuing a new link (so a user has at most one live token) and
+ * again after a successful reset. Marking them used rather than deleting them
+ * keeps an auditable trail of how many resets were requested.
+ */
+export function invalidateOutstandingResetTokens(db, userId) {
+  return db.query(
+    `UPDATE password_reset_tokens
+        SET used_at = now()
+      WHERE user_id = $1
+        AND used_at IS NULL
+      RETURNING id`,
+    [userId],
+  );
+}
+
+/**
+ * Reads a token together with the account it belongs to.
+ *
+ * Used to answer "is this link still good?" without spending it, and as a cheap
+ * pre-check before paying for a bcrypt hash.
+ */
+export function findPasswordResetToken(db, tokenHash) {
+  return db.query(
+    `SELECT t.id, t.user_id, t.expires_at, t.used_at,
+            (t.used_at IS NULL AND t.expires_at > now()) AS is_live,
+            u.name, u.email, u.role, u.is_active
+       FROM password_reset_tokens t
+       JOIN users u ON u.id = t.user_id
+      WHERE t.token_hash = $1
+        AND u.deleted_at IS NULL`,
+    [tokenHash],
+  );
+}
+
+/**
+ * Atomically spends a token.
+ *
+ * This single statement is the entire single-use guarantee. Under READ
+ * COMMITTED a second concurrent UPDATE blocks on the row lock and then
+ * re-evaluates its WHERE clause against the committed row, where `used_at` is
+ * no longer NULL -- so it matches zero rows and the caller is told the link is
+ * spent. No advisory locks, no SELECT ... FOR UPDATE round trip.
+ */
+export function consumePasswordResetToken(db, tokenHash) {
+  return db.query(
+    `UPDATE password_reset_tokens
+        SET used_at = now()
+      WHERE token_hash = $1
+        AND used_at IS NULL
+        AND expires_at > now()
+      RETURNING user_id`,
+    [tokenHash],
+  );
+}
+
+/**
+ * Replaces a password and revokes every issued session in one statement.
+ *
+ * The two must not be separable: a password change is exactly the moment an
+ * attacker holding a stolen token should be evicted. Bumping `token_version`
+ * invalidates all outstanding JWTs because `authenticate` compares it on every
+ * request.
+ */
+export function setPasswordHash(db, userId, passwordHash) {
+  return db.query(
+    `UPDATE users
+        SET password_hash = $2,
+            token_version = token_version + 1
+      WHERE id = $1
+        AND deleted_at IS NULL
+      RETURNING id, name, email, role`,
+    [userId, passwordHash],
+  );
+}

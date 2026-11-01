@@ -48,4 +48,30 @@ export const warehouseAccessSchema = z.object({
   revoke: z.array(positiveInt).max(50).default([]),
 });
 
+/**
+ * Password reset.
+ *
+ * The token is shape-checked only as "a short non-empty string" here. Whether
+ * it is one of *our* tokens is decided in the service, so a malformed link
+ * produces the same { valid: false } the UI already handles instead of a 400
+ * the caller would have to special-case.
+ */
+const resetToken = z.string().trim().min(1, 'A reset token is required').max(200);
+
+export const forgotPasswordSchema = z.object({ email });
+
+export const validateResetTokenSchema = z.object({ token: resetToken });
+
+export const resetPasswordSchema = z
+  .object({
+    token: resetToken,
+    password,
+    confirmPassword: z.string().min(1, 'Confirm your new password').max(72),
+  })
+  // Reported against the confirmation field, which is where a user looks for it.
+  .refine((value) => value.password === value.confirmPassword, {
+    message: 'Passwords do not match',
+    path: ['confirmPassword'],
+  });
+
 export const listUsersQuery = paginationQuery;

@@ -8,11 +8,13 @@ import { DashboardLayout } from './layouts/DashboardLayout.jsx';
 import { AuthLayout } from './layouts/AuthLayout.jsx';
 import { homePathFor, ROLES } from './lib/constants.js';
 import { Dashboard } from './pages/Dashboard.jsx';
+import { ForgotPassword } from './pages/ForgotPassword.jsx';
 import { Inventory } from './pages/Inventory.jsx';
 import { Login } from './pages/Login.jsx';
 import { Orders } from './pages/Orders.jsx';
 import { Products } from './pages/Products.jsx';
 import { Register } from './pages/Register.jsx';
+import { ResetPassword } from './pages/ResetPassword.jsx';
 import { Users } from './pages/Users.jsx';
 import { Warehouses } from './pages/Warehouses.jsx';
 
@@ -51,6 +53,12 @@ export default function App() {
       <Route element={<AuthLayout />}>
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
+        {/* Both are reachable without a session by design: the whole point is
+            that the user cannot sign in. They sit inside AuthLayout so the
+            flow keeps the same chrome as the sign-in page. */}
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+        {/* The token arrives as ?token=... and is read by the page. */}
+        <Route path="/reset-password" element={<ResetPassword />} />
       </Route>
 
       {/* Signed-in routes. RequireAuth restores the session from the HttpOnly

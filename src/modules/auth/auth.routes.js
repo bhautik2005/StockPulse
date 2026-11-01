@@ -1,6 +1,8 @@
 /**
  * Authentication routes (/api/auth) and user administration (/api/users).
  */
+import { createHash } from 'node:crypto';
+
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 
@@ -15,10 +17,13 @@ import { validate } from '../../middleware/validate.js';
 import * as service from './auth.service.js';
 import {
   createUserSchema,
+  forgotPasswordSchema,
   listUsersQuery,
   loginSchema,
   registerSchema,
+  resetPasswordSchema,
   updateUserSchema,
+  validateResetTokenSchema,
   warehouseAccessSchema,
 } from './auth.schemas.js';
 
@@ -76,6 +81,96 @@ export function createLoginLimiter({
 
 const loginLimiter = createLoginLimiter();
 
+// ---------------------------------------------------------------------------
+// Password reset throttles
+// ---------------------------------------------------------------------------
+
+/**
+ * Two independent buckets, because they stop different attacks:
+ *
+ *   - per IP:      5 requests / 15 min -> one host hammering the endpoint
+ *   - per account: 3 requests /  1 hour -> a botnet aimed at one mailbox
+ *
+ * The account bucket is keyed on the *hash* of the normalised email. A limiter
+ * store holds its keys in memory, where they can end up in a heap dump or a
+ * debug log; storing a truncated SHA-256 means that artefact cannot be read as
+ * a list of which addresses have accounts -- the same property the generic
+ * response is protecting.
+ */
+function hashEmailKey(email) {
+  return createHash('sha256').update(email).digest('hex').slice(0, 16);
+}
+
+/** Same IPv6 collapse as the login limiter, for the same reason. */
+function ipKey(req) {
+  const raw = req.ip ?? '';
+  return raw.includes(':') ? raw.split(':').slice(0, 4).join(':') : raw;
+}
+
+function rejectRateLimited(req, res, message) {
+  res.status(429).json({
+    error: { code: 'RATE_LIMITED', message, requestId: req.id },
+  });
+}
+
+function limiterOptions({ windowMs, max, enabled }) {
+  return {
+    windowMs,
+    limit: max,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    skip: () => !enabled,
+  };
+}
+
+export function createForgotPasswordLimiter({
+  windowMs = env.RESET_RATE_IP_WINDOW_MS,
+  max = env.RESET_RATE_IP_MAX,
+  enabled = env.isRateLimitEnabled,
+} = {}) {
+  return rateLimit({
+    ...limiterOptions({ windowMs, max, enabled }),
+    keyGenerator: (req) => ipKey(req),
+    handler: (req, res) =>
+      rejectRateLimited(req, res, 'Too many reset requests from this address. Try again later.'),
+  });
+}
+
+export function createForgotPasswordAccountLimiter({
+  windowMs = env.RESET_RATE_ACCOUNT_WINDOW_MS,
+  max = env.RESET_RATE_ACCOUNT_MAX,
+  enabled = env.isRateLimitEnabled,
+} = {}) {
+  return rateLimit({
+    ...limiterOptions({ windowMs, max, enabled }),
+    keyGenerator: (req) => {
+      const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+      // Fall back to the IP when the body has no email: an unkeyable request
+      // must still be counted against something rather than bypass the limiter.
+      return email ? `acct:${hashEmailKey(email)}` : `ip:${ipKey(req)}`;
+    },
+    handler: (req, res) =>
+      rejectRateLimited(req, res, 'Too many reset requests for this account. Try again later.'),
+  });
+}
+
+export function createResetAttemptLimiter({
+  windowMs = env.RATE_LIMIT_WINDOW_MS,
+  max = 20,
+  enabled = env.isRateLimitEnabled,
+} = {}) {
+  return rateLimit({
+    ...limiterOptions({ windowMs, max, enabled }),
+    keyGenerator: (req) => ipKey(req),
+    handler: (req, res) =>
+      rejectRateLimited(req, res, 'Too many attempts. Try again in a few minutes.'),
+  });
+}
+
+const forgotPasswordLimiter = createForgotPasswordLimiter();
+const forgotPasswordAccountLimiter = createForgotPasswordAccountLimiter();
+const resetAttemptLimiter = createResetAttemptLimiter();
+
 /** Public sign-up. Always creates a Client; internal roles need an Admin. */
 authRouter.post(
   '/register',
@@ -112,6 +207,65 @@ authRouter.post(
       data: user,
       token,
       meta: { csrf_token: csrfToken },
+    });
+  }),
+);
+
+/**
+ * Requests a password-reset link.
+ *
+ * Public, and deliberately answers 200 with one constant body for every
+ * input -- an unknown address, a disabled account and a real one are
+ * indistinguishable. The three mechanisms that keep that promise (equal token
+ * work, non-blocking email, constant reply) live in the service.
+ */
+authRouter.post(
+  '/forgot-password',
+  forgotPasswordLimiter,
+  forgotPasswordAccountLimiter,
+  validate({ body: forgotPasswordSchema }),
+  asyncHandler(async (req, res) => {
+    const result = await service.requestPasswordReset({ email: req.body.email });
+    res.json(result);
+  }),
+);
+
+/**
+ * Reports whether a reset link is still usable, without spending it.
+ *
+ * Never 404s on a bad token: the answer is { valid: false }, which is both the
+ * honest reply and one that cannot be used to distinguish "expired" from
+ * "never existed" from "malformed".
+ */
+authRouter.post(
+  '/validate-reset-token',
+  resetAttemptLimiter,
+  validate({ body: validateResetTokenSchema }),
+  asyncHandler(async (req, res) => {
+    const result = await service.validateResetToken({ token: req.body.token });
+    res.json(result);
+  }),
+);
+
+/**
+ * Spends a reset link and sets a new password.
+ *
+ * Sets no cookie and returns no token: the caller signs in afterwards. That is
+ * what keeps a reset from doubling as an authentication bypass for anyone
+ * holding the link.
+ */
+authRouter.post(
+  '/reset-password',
+  resetAttemptLimiter,
+  validate({ body: resetPasswordSchema }),
+  asyncHandler(async (req, res) => {
+    const user = await service.resetPassword({
+      token: req.body.token,
+      password: req.body.password,
+    });
+    res.json({
+      message: 'Your password has been reset. You can now sign in with your new password.',
+      data: user,
     });
   }),
 );

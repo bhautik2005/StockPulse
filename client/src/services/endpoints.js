@@ -14,6 +14,20 @@ export const authApi = {
   me: () => api.get('/api/auth/me'),
   /** `all` also bumps token_version, revoking every other session. */
   logout: (all = false) => api.post('/api/auth/logout', undefined, { query: { all } }),
+
+  /*
+   * Password reset.
+   *
+   * Note what `forgotPassword` does *not* do: it never reports whether the
+   * address exists. The server answers identically either way, and the UI must
+   * not invent a distinction the API deliberately withholds.
+   */
+  forgotPassword: (email) => api.post('/api/auth/forgot-password', { email }),
+  /** Checks a link without spending it, so rendering the form cannot burn it. */
+  validateResetToken: (token) => api.post('/api/auth/validate-reset-token', { token }),
+  /** Spends the link and sets the password. Deliberately does not sign in. */
+  resetPassword: ({ token, password, confirmPassword }) =>
+    api.post('/api/auth/reset-password', { token, password, confirmPassword }),
 };
 
 export const usersApi = {

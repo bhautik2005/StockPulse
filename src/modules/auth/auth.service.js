@@ -12,9 +12,21 @@
  *     stop working immediately instead of remaining valid until they expire.
  */
 import { pool, withTransaction } from '../../db/pool.js';
-import { ROLES } from '../../config/env.js';
+import { env, ROLES } from '../../config/env.js';
 import { AppError } from '../../errors/AppError.js';
+import {
+  buildResetUrl,
+  passwordChangedEmail,
+  passwordResetEmail,
+} from '../../lib/emailTemplates.js';
+import { logger } from '../../lib/logger.js';
+import { sendMailInBackground } from '../../lib/mailer.js';
 import { DUMMY_HASH, hashPassword, verifyPassword } from '../../lib/password.js';
+import {
+  generateResetToken,
+  hashResetToken,
+  isWellFormedResetToken,
+} from '../../lib/resetTokens.js';
 import { signAccessToken } from '../../lib/tokens.js';
 import * as repo from './auth.repository.js';
 
@@ -253,4 +265,153 @@ export async function deleteUser({ actor, userId }) {
       history: history[0],
     };
   });
+}
+
+// ---------------------------------------------------------------------------
+// Password reset
+// ---------------------------------------------------------------------------
+
+/**
+ * The single response for every password-reset request.
+ *
+ * Exported so the route and the tests cannot drift from it. It is deliberately
+ * identical for an unknown address, a disabled account and a real one: the
+ * endpoint must not answer the question "does this email have an account?".
+ */
+export const PASSWORD_RESET_MESSAGE =
+  'If an account exists with this email address, you will receive a reset link shortly.';
+
+/**
+ * Starts a password reset.
+ *
+ * Never throws for an ineligible address and never reveals one. Three things
+ * keep that promise from leaking through side channels:
+ *
+ *  - a token is generated and hashed on *both* paths, so the CPU cost is equal;
+ *  - the email is dispatched without being awaited, so the response time does
+ *    not jump by an SMTP round-trip only when the account is real;
+ *  - the reply body is a module constant.
+ */
+export async function requestPasswordReset({ email }) {
+  const { rows } = await repo.findUserByEmail(pool, email);
+  const user = rows[0];
+
+  // Eligible means: the row exists (findUserByEmail already excludes deleted
+  // accounts) and the account is enabled. A disabled account must not be able
+  // to reset its way back in.
+  const eligible = Boolean(user?.is_active);
+
+  // Deliberately before the branch: same work, same timing, either way.
+  const { raw, hash } = generateResetToken();
+
+  if (!eligible) {
+    // Logged at debug with no email address: useful operationally, useless to
+    // anyone probing, and it keeps raw addresses out of the log stream.
+    logger.debug('password reset requested for ineligible address');
+    return { message: PASSWORD_RESET_MESSAGE };
+  }
+
+  const expiresAt = new Date(Date.now() + env.resetTokenTtlMs);
+
+  await withTransaction(async (db) => {
+    // At most one live link per account: a second request retires the first,
+    // so a user is never left guessing which of two emails still works.
+    await repo.invalidateOutstandingResetTokens(db, user.id);
+    await repo.createPasswordResetToken(db, {
+      userId: user.id,
+      tokenHash: hash,
+      expiresAt,
+    });
+  });
+
+  sendMailInBackground({
+    to: user.email,
+    ...passwordResetEmail({
+      name: user.name,
+      // Built from FRONTEND_URL, never from the request's Host header: a spoofed
+      // Host must not be able to redirect the token to another domain.
+      resetUrl: buildResetUrl(raw),
+      ttlMinutes: env.RESET_TOKEN_TTL_MINUTES,
+    }),
+  });
+
+  logger.info('password reset link issued', { userId: user.id });
+  return { message: PASSWORD_RESET_MESSAGE };
+}
+
+/**
+ * Answers "is this link still usable?" without spending it.
+ *
+ * A malformed or unknown token is not an error: it is simply not valid.
+ */
+export async function validateResetToken({ token }) {
+  if (!isWellFormedResetToken(token)) return { valid: false };
+
+  const { rows } = await repo.findPasswordResetToken(pool, hashResetToken(token));
+  const record = rows[0];
+
+  // `is_live` is evaluated by Postgres (unused and unexpired); `is_active`
+  // stops a link minted before an account was disabled from still working.
+  return { valid: Boolean(record?.is_live && record.is_active) };
+}
+
+/**
+ * Consumes a reset link and sets a new password.
+ *
+ * Ordering matters:
+ *   1. Shape check and a cheap lookup first, so a bogus token cannot force a
+ *      bcrypt hash (which would be a cheap CPU-exhaustion primitive).
+ *   2. bcrypt runs *outside* the transaction. At cost 12 it takes ~250ms, and
+ *      holding a pooled connection plus a row lock for that long is how a reset
+ *      endpoint becomes a pool-exhaustion DoS.
+ *   3. The transaction re-checks and spends the token atomically, so two
+ *      concurrent submissions of the same link cannot both succeed.
+ *
+ * No session is created: the caller must sign in with the new password.
+ */
+export async function resetPassword({ token, password }) {
+  const invalid = () =>
+    AppError.badRequest(
+      'This password reset link is invalid or has expired',
+      'INVALID_RESET_TOKEN',
+    );
+
+  if (!isWellFormedResetToken(token)) throw invalid();
+
+  const tokenHash = hashResetToken(token);
+
+  const { rows: found } = await repo.findPasswordResetToken(pool, tokenHash);
+  const candidate = found[0];
+  if (!candidate?.is_live || !candidate.is_active) throw invalid();
+
+  const passwordHash = await hashPassword(password);
+
+  const user = await withTransaction(async (db) => {
+    // The single-use guarantee. A concurrent request that lost the race gets
+    // zero rows here, even though it passed the pre-check above.
+    const { rows: spent } = await repo.consumePasswordResetToken(db, tokenHash);
+    if (spent.length === 0) throw invalid();
+
+    const userId = spent[0].user_id;
+
+    const { rows: updated } = await repo.setPasswordHash(db, userId, passwordHash);
+    if (updated.length === 0) throw invalid();
+
+    // Any other outstanding link for this account dies with the reset.
+    await repo.invalidateOutstandingResetTokens(db, userId);
+
+    // No role, is_active or warehouse change happens here: a password reset
+    // must not be a back door to privilege or status changes.
+    return updated[0];
+  });
+
+  // After the commit: an email announcing a change that then rolled back would
+  // be a lie, and the token is gone by this point either way.
+  sendMailInBackground({ to: user.email, ...passwordChangedEmail({ name: user.name }) });
+
+  logger.info('password reset completed', { userId: user.id });
+
+  // Identity only -- never a token. The client is expected to send the user to
+  // the sign-in page, not straight into the console.
+  return { id: user.id, name: user.name, email: user.email, role: user.role };
 }

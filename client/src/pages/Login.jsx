@@ -112,6 +112,17 @@ export function Login() {
           )}
         </Field>
 
+        {/* Pulled up against the password field so it reads as belonging to it,
+            which is where people look when they cannot get in. */}
+        <div className="-mt-2 flex justify-end">
+          <Link
+            to="/forgot-password"
+            className="focus-ring rounded text-xs font-medium text-primary hover:underline"
+          >
+            Forgot password?
+          </Link>
+        </div>
+
         <Button type="submit" loading={submitting} className="mt-1 w-full">
           {submitting ? 'Signing in…' : (
             <>
