@@ -43,7 +43,7 @@ function buildTransport() {
     // SMTP handshake would hold a request open indefinitely.
     connectionTimeout: 10_000,
     greetingTimeout: 10_000,
-    socketTimeout: 20_000,
+    socketTimeout: 40_000,
   });
 }
 
