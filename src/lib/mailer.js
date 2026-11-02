@@ -98,7 +98,19 @@ export async function sendMail({ to, subject, text, html, from }) {
     throw new Error('Email is not configured (EMAIL_USER / EMAIL_PASS or RESEND_API_KEY are missing)');
   }
 
-  const sender = from ?? env.emailFrom;
+  // When using Resend, domains like @gmail.com cannot be verified and are rejected with 403.
+  // Unless a verified custom EMAIL_FROM is configured, use Resend's test sender (onboarding@resend.dev).
+  let sender = from;
+  if (!sender) {
+    if (process.env.RESEND_API_KEY && (!env.EMAIL_FROM || env.emailFrom.includes('@gmail.com'))) {
+      sender = 'StockPulse <onboarding@resend.dev>';
+    } else {
+      sender = env.emailFrom;
+    }
+  } else if (process.env.RESEND_API_KEY && sender.includes('@gmail.com')) {
+    sender = 'StockPulse <onboarding@resend.dev>';
+  }
+
   const message = { from: sender, to, subject, text, html };
 
   let info;
@@ -156,7 +168,7 @@ export async function sendResetEmail(toEmail, token) {
   const resetUrl = `${process.env.FRONTEND_URL ?? env.FRONTEND_URL}/reset-password?token=${token}`;
 
   const from = process.env.RESEND_API_KEY
-    ? 'StockPulse <onboarding@resend.dev>'
+    ? 'StockPulse <EMAIL_USER>'
     : env.emailFrom;
 
   await sendMail({
