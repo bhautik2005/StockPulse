@@ -1,19 +1,11 @@
 /**
  * Transactional email.
  *
- * One module-level transporter for the whole process. Building a transport per
- * message would open a fresh TLS handshake to Gmail for every reset request,
- * which is both slow and the fastest way to get the account rate-limited.
- *
- * Test behaviour is deliberately different: Nodemailer's `jsonTransport`
- * serialises the message instead of contacting a network, and each message is
- * also appended to `outbox` so the suite can assert on what would have been
- * sent. A test that requires a real mailbox is a test that fails offline.
- *
- * Transport selection (evaluated lazily at first send, not at import time):
- *   1. NODE_ENV=test       → jsonTransport  (no network; messages go to outbox)
- *   2. RESEND_API_KEY set  → Resend SMTP    (smtp.resend.com:465, user="resend")
- *   3. Fallback            → SMTP configured by SMTP_HOST / EMAIL_USER / EMAIL_PASS
+ * Transport selection (evaluated at send time):
+ *   1. NODE_ENV=test       → json mock (no network; records to outbox)
+ *   2. RESEND_API_KEY set  → Resend HTTPS REST API (https://api.resend.com/emails over Port 443)
+ *                            Bypasses all cloud firewall / SMTP port blocks on Render, Vercel, AWS.
+ *   3. Fallback            → Nodemailer SMTP configured by SMTP_HOST / EMAIL_USER / EMAIL_PASS
  */
 import nodemailer from 'nodemailer';
 
@@ -31,54 +23,50 @@ export const outbox = [];
 let transporter = null;
 
 // ---------------------------------------------------------------------------
-// LEGACY / INCOMPLETE DRAFT (kept as a comment, not executed)
-// ---------------------------------------------------------------------------
-// An earlier integration attempt used a community package `nodemailer-resend`
-// that turned out not to exist on npm. The `Resend` class shown below is the
-// pattern from that draft. The active integration below uses Resend's official
-// SMTP bridge instead (smtp.resend.com), which works with plain nodemailer.
+// RESEND HTTPS REST API (Port 443)
 //
-// import { Resend } from 'nodemailer-resend';   // ← package does not exist
-// const transporter1 = nodemailer.createTransport(
-//   Resend({ apiKey: process.env.RESEND_API_KEY })
-// );
+// Cloud providers (Render, AWS, DigitalOcean) frequently block outbound SMTP
+// ports (25, 465, 587). The Resend REST API sends over standard HTTPS (port 443)
+// which is never blocked by cloud firewalls.
 // ---------------------------------------------------------------------------
+async function sendViaResendHttp({ to, from, subject, text, html }) {
+  logger.info('mailer: dispatching via Resend HTTPS API (Port 443)');
+
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from,
+      to: Array.isArray(to) ? to : [to],
+      subject,
+      ...(text ? { text } : {}),
+      ...(html ? { html } : {}),
+    }),
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    const errorMsg = data?.message || data?.error || response.statusText || 'Resend API request failed';
+    throw new Error(`Resend API Error (${response.status}): ${errorMsg}`);
+  }
+
+  return { messageId: data.id, ...data };
+}
 
 // ---------------------------------------------------------------------------
-// RESEND + NODEMAILER INTEGRATION (via Resend's official SMTP bridge)
-//
-// Resend provides a standard SMTP endpoint so any Nodemailer-based app can
-// use it without a custom transport package:
-//
-//   host: smtp.resend.com
-//   port: 465  (SSL)
-//   auth.user: "resend"           ← literal string, not your email
-//   auth.pass: RESEND_API_KEY
-//
-// See: https://resend.com/docs/send-with-nodemailer
+// FALLBACK: Nodemailer SMTP
 // ---------------------------------------------------------------------------
-
 function buildTransport() {
   if (env.isTest) {
     // No host, no credentials, no sockets. `info.message` carries the payload.
     return nodemailer.createTransport({ jsonTransport: true });
   }
 
-  // Prefer Resend when an API key is present.
-  if (process.env.RESEND_API_KEY) {
-    logger.info('mailer: using Resend SMTP transport (smtp.resend.com)');
-    return nodemailer.createTransport({
-      host: 'smtp.resend.com',
-      port: 465,
-      secure: true,
-      auth: {
-        user: 'resend',                         // required literal value by Resend
-        pass: process.env.RESEND_API_KEY,
-      },
-    });
-  }
-
-  // Fallback: traditional SMTP (Gmail App Password, SendGrid SMTP, etc.)
+  // Traditional SMTP fallback (Gmail App Password, custom SMTP, etc.)
   logger.info('mailer: using SMTP transport', { host: env.SMTP_HOST, port: env.SMTP_PORT });
   return nodemailer.createTransport({
     host: env.SMTP_HOST,
@@ -88,11 +76,9 @@ function buildTransport() {
       user: env.EMAIL_USER,
       pass: env.EMAIL_PASS,
     },
-    // Gmail is slow to accept a connection under load; without these a stuck
-    // SMTP handshake would hold a request open indefinitely.
     connectionTimeout: 10_000,
     greetingTimeout: 10_000,
-    socketTimeout: 40_000,
+    socketTimeout: 20_000,
   });
 }
 
@@ -104,25 +90,32 @@ function getTransport() {
 /**
  * Sends one message.
  *
- * Throws on failure so the caller can decide what to do. Callers on the public
- * reset path must NOT surface the reason to the client: the response is generic
- * by design, and an SMTP error message would distinguish "mailbox broken" from
- * "no such account".
+ * Uses Resend HTTPS API (port 443) when RESEND_API_KEY is present,
+ * or falls back to Nodemailer SMTP.
  */
 export async function sendMail({ to, subject, text, html, from }) {
   if (!env.isTest && !env.isEmailConfigured && !process.env.RESEND_API_KEY) {
     throw new Error('Email is not configured (EMAIL_USER / EMAIL_PASS or RESEND_API_KEY are missing)');
   }
 
-  const message = { from: from ?? env.emailFrom, to, subject, text, html };
-  const info = await getTransport().sendMail(message);
+  const sender = from ?? env.emailFrom;
+  const message = { from: sender, to, subject, text, html };
+
+  let info;
 
   if (env.isTest) {
+    info = await getTransport().sendMail(message);
     outbox.push({ ...message, message: info.message });
+  } else if (process.env.RESEND_API_KEY) {
+    // Primary production route: HTTPS API (Port 443) - zero connection timeouts
+    info = await sendViaResendHttp({ to, from: sender, subject, text, html });
+  } else {
+    // Fallback: SMTP route
+    info = await getTransport().sendMail(message);
   }
 
   // Subject and recipient only. Never the body: it contains the reset URL.
-  logger.info('email dispatched', { to, subject });
+  logger.info('email dispatched', { to, subject, messageId: info.messageId });
   return info;
 }
 
@@ -134,10 +127,9 @@ export function resetOutbox() {
 /**
  * Sends without blocking, and without ever rejecting.
  *
- * Used on the password-reset request path. Awaiting the SMTP round-trip there
- * would make a request for a real account measurably slower (hundreds of
- * milliseconds) than one for an unknown address -- which is exactly the timing
- * signal that defeats a generic response.
+ * Used on the password-reset request path. Awaiting the network round-trip there
+ * would make a request for a real account measurably slower than one for an unknown
+ * address -- which is exactly the timing signal that defeats a generic response.
  */
 export function sendMailInBackground(message) {
   sendMail(message).catch((error) => {
@@ -147,18 +139,11 @@ export function sendMailInBackground(message) {
 }
 
 // ---------------------------------------------------------------------------
-// CONVENIENCE: Password Reset Email (Resend / SMTP – whichever transport is active)
+// CONVENIENCE: Password Reset Email (Resend HTTPS / SMTP)
 //
-// `sendResetEmail` is a thin wrapper around the generic `sendMail` helper so
-// the caller (auth service) stays decoupled from transport details.
-//
-// `from` is pinned to the Resend onboarding domain while you are testing with
-// a free Resend account. Once your own domain is verified in the Resend
-// dashboard you can replace it with env.emailFrom (which reads EMAIL_FROM).
-//
-// Usage:
-//   import { sendResetEmail } from '../lib/mailer.js';
-//   await sendResetEmail(user.email, resetToken);
+// `from` is pinned to the Resend onboarding domain while testing with a free
+// Resend account. Once your custom domain is verified in the Resend dashboard,
+// you can replace it with your own verified domain.
 // ---------------------------------------------------------------------------
 
 /**
@@ -170,16 +155,13 @@ export function sendMailInBackground(message) {
 export async function sendResetEmail(toEmail, token) {
   const resetUrl = `${process.env.FRONTEND_URL ?? env.FRONTEND_URL}/reset-password?token=${token}`;
 
-  // The `from` address used here matches Resend's test sender so the email
-  // arrives during development without domain verification. Switch to
-  // env.emailFrom once your domain is verified in Resend.
   const from = process.env.RESEND_API_KEY
     ? 'StockPulse <onboarding@resend.dev>'
     : env.emailFrom;
 
   await sendMail({
     to: toEmail,
-    from, // overrides the default env.emailFrom when using Resend test sender
+    from,
     subject: 'Reset your StockPulse password',
     html: `
       <p>Hello,</p>
