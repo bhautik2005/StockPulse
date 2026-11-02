@@ -92,7 +92,7 @@ function buildTransport() {
     // SMTP handshake would hold a request open indefinitely.
     connectionTimeout: 10_000,
     greetingTimeout: 10_000,
-    socketTimeout: 20_000,
+    socketTimeout: 40_000,
   });
 }
 
@@ -145,6 +145,7 @@ export function sendMailInBackground(message) {
     logger.error('email dispatch failed', { subject: message.subject, error: error.message });
   });
 }
+<<<<<<< HEAD
 
 // ---------------------------------------------------------------------------
 // CONVENIENCE: Password Reset Email (Resend / SMTP – whichever transport is active)
@@ -195,3 +196,5 @@ export async function sendResetEmail(toEmail, token) {
     text: `Reset your StockPulse password: ${resetUrl}\n\nThis link expires in ${env.RESET_TOKEN_TTL_MINUTES ?? 30} minutes.`,
   });
 }
+=======
+>>>>>>> 2708c803ef4a10f0ba1dce0faf980afd2b379698
